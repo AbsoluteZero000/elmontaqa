@@ -619,18 +619,13 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as exc:errors.append({'channel':ch['title'],'error':str(exc)})
             for playlist in playlists:
                 try:
-                    last_count=playlist['last_item_count']
-                    if last_count<=0:
-                        con=db();last_count=con.execute('SELECT COUNT(*) FROM user_playlist_seen WHERE user_id=? AND playlist_id=?',(user['id'],playlist['id'])).fetchone()[0];con.close()
-                    _,feed_items,total_count=youtube_playlist_feed(playlist['youtube_playlist_id'],last_count+1,True)
-                    if total_count<last_count:_,feed_items,total_count=youtube_playlist_feed(playlist['youtube_playlist_id'],1,True)
+                    # Playlist order/count and upload dates do not identify new membership.
+                    # Reconcile the full membership against the baseline captured on add.
+                    _,feed_items,total_count=youtube_playlist_feed(playlist['youtube_playlist_id'],1,True)
                     checkpoint=playlist['last_video_published_at'] or datetime.fromtimestamp(playlist['created_at'],tz=datetime.now().astimezone().tzinfo).isoformat()
-                    checkpoint_epoch=timestamp_epoch(checkpoint);latest_published=checkpoint
+                    latest_published=checkpoint
                     for video in feed_items:
                         observed_at=int(time.time())
-                        video_epoch=timestamp_epoch(video['published_at'])
-                        if checkpoint_epoch is not None and video_epoch is not None and video_epoch<=checkpoint_epoch:
-                            con=db();con.execute('INSERT OR IGNORE INTO user_playlist_seen(user_id,playlist_id,video_id,seen_at) VALUES(?,?,?,?)',(user['id'],playlist['id'],video['video_id'],observed_at));con.commit();con.close();continue
                         latest_published=later_timestamp(latest_published,video['published_at'])
                         con=db();seen=con.execute('SELECT 1 FROM user_playlist_seen WHERE user_id=? AND playlist_id=? AND video_id=?',(user['id'],playlist['id'],video['video_id'])).fetchone();exists=con.execute('SELECT 1 FROM user_videos WHERE user_id=? AND video_id=?',(user['id'],video['video_id'])).fetchone()
                         if seen:

@@ -124,5 +124,66 @@ class WatchedDeletionTests(APITest):
         self.assertEqual(self.video_ids(), {"watched"})
 
 
+class PlaylistSyncTests(APITest):
+    @staticmethod
+    def video(video_id):
+        return {"video_id": video_id, "title": video_id, "description": "",
+                "channel_id": "channel", "channel_title": "Channel",
+                "published_at": "2000-01-01T00:00:00Z", "thumbnail_url": "",
+                "video_url": f"https://www.youtube.com/watch?v={video_id}"}
+
+    def add_playlist(self, baseline):
+        with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", [self.video(v) for v in baseline], len(baseline))):
+            status, _ = self.request("/api/me/playlists", {"playlist": "PLfixture123456", "category_id": 1})
+        self.assertEqual(status, 201)
+
+    def test_new_membership_is_imported_at_any_position_regardless_of_upload_date(self):
+        self.add_playlist(["baseline-a", "baseline-b"])
+        exports = []
+
+        def export(token, source_id, video):
+            exports.append(video["video_id"])
+            return {"id": "page-" + video["video_id"]}
+
+        # Insert at head/middle/tail, then replace an item without growing the list.
+        memberships = [
+            ["head", "baseline-a", "baseline-b"],
+            ["head", "baseline-a", "middle", "baseline-b"],
+            ["head", "baseline-a", "middle", "baseline-b", "tail"],
+            ["head", "replacement", "middle", "baseline-b", "tail"],
+        ]
+        with patch.object(app, "notion_create_video", side_effect=export):
+            for ids in memberships:
+                with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", [self.video(v) for v in ids], len(ids))) as fetch:
+                    status, result = self.request("/api/me/sync", {})
+                    self.assertEqual(status, 200)
+                    self.assertEqual(result["errors"], [])
+                    self.assertEqual(result["count"], 1)
+                    fetch.assert_called_once_with("PLfixture123456", 1, True)
+            # Reordering and repeated sync do not re-export or import the baseline.
+            with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", [self.video(v) for v in reversed(memberships[-1])], 5)):
+                self.assertEqual(self.request("/api/me/sync", {})[1]["count"], 0)
+        self.assertEqual(exports, ["head", "middle", "tail", "replacement"])
+        self.assertEqual(self.video_ids(), set(exports))
+
+    def test_failed_export_is_retried_and_shared_video_links_without_duplicate_export(self):
+        self.add_playlist(["baseline"])
+        self.add_video("shared")
+        items = [self.video(v) for v in ("baseline", "shared", "retry")]
+        with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", items, 3)):
+            with patch.object(app, "notion_create_video", side_effect=ValueError("fixture failure")):
+                result = self.request("/api/me/sync", {})[1]
+                self.assertEqual(len(result["errors"]), 1)
+                self.assertNotIn("retry", self.video_ids())
+            with patch.object(app, "notion_create_video", return_value={"id": "retry-page"}) as export:
+                result = self.request("/api/me/sync", {})[1]
+                self.assertEqual(result["count"], 1)
+                self.assertEqual(result["errors"], [])
+                self.assertEqual(export.call_count, 1)
+        con = app.db()
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM user_video_sources WHERE user_id=1 AND video_id='shared' AND source_type='playlist'").fetchone()[0], 1)
+        con.close()
+
+
 if __name__ == "__main__":
     unittest.main()
