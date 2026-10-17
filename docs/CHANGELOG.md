@@ -30,3 +30,9 @@ The hashes in AUDIT.md describe the recovered initial commit, not subsequently e
 - Main and settings refresh actions share visible progress/error feedback and both disable during one page's sync. Successful sync updates the displayed time; a feed reload failure remains visible.
 - Corrected channel-removal help to agree with deletion behavior.
 - Four Node behavioral tests execute the actual page script with a minimal DOM adapter; CI runs them. Real browser rendering, keyboard accessibility and cross-tab/server sync serialization remain outside this change.
+
+## 2026-10-17 — avoid repeated playlist detail requests
+
+- The full membership scan now fetches detailed metadata only for IDs absent from the playlist baseline and existing library. Known IDs still participate in source reconciliation.
+- This removes the repeated per-video extraction cost introduced by the correctness fix above; discovering the full membership still has a cost for large playlists and remains synchronous.
+- An extraction fixture verifies that baseline/shared videos skip detailed requests while new videos retain their actual upload date. Integration regressions verify membership discovery still scans from the start.

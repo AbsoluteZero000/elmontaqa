@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 with patch.dict(os.environ, {"APP_SECRET": secrets.token_urlsafe(48)}):
@@ -179,7 +179,8 @@ class PlaylistSyncTests(APITest):
                     self.assertEqual(status, 200)
                     self.assertEqual(result["errors"], [])
                     self.assertEqual(result["count"], 1)
-                    fetch.assert_called_once_with("PLfixture123456", 1, True)
+                    self.assertEqual(fetch.call_args.args, ("PLfixture123456", 1, True))
+                    self.assertTrue({"baseline-a", "baseline-b"} <= fetch.call_args.kwargs['known_video_ids'])
             # Reordering and repeated sync do not re-export or import the baseline.
             with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", [self.video(v) for v in reversed(memberships[-1])], 5)):
                 self.assertEqual(self.request("/api/me/sync", {})[1]["count"], 0)
@@ -203,6 +204,26 @@ class PlaylistSyncTests(APITest):
         con = app.db()
         self.assertEqual(con.execute("SELECT COUNT(*) FROM user_video_sources WHERE user_id=1 AND video_id='shared' AND source_type='playlist'").fetchone()[0], 1)
         con.close()
+
+
+class PlaylistExtractionTests(unittest.TestCase):
+    def test_only_unseen_videos_need_detail_extraction(self):
+        flat = MagicMock()
+        flat.__enter__.return_value = flat
+        flat.extract_info.return_value = {
+            'title': 'Playlist', 'playlist_count': 3,
+            'entries': [{'id': value, 'title': value} for value in ('baseline', 'shared', 'new')]
+        }
+        detail = MagicMock()
+        detail.extract_info.return_value = {'id': 'new', 'title': 'New details', 'timestamp': 946684800}
+        with patch.object(app, 'YoutubeDL', side_effect=[flat, detail]):
+            _, videos, count = app.youtube_playlist_feed('PLfixture', 1, True, known_video_ids={'baseline', 'shared'})
+        self.assertEqual(count, 3)
+        self.assertEqual([v['video_id'] for v in videos], ['baseline', 'shared', 'new'])
+        detail.extract_info.assert_called_once_with('https://www.youtube.com/watch?v=new', download=False)
+        self.assertEqual(videos[-1]['title'], 'New details')
+        self.assertTrue(videos[-1]['published_at'].startswith('2000-01-01'))
+        detail.close.assert_called_once()
 
 
 if __name__ == "__main__":

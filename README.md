@@ -10,7 +10,7 @@ Arabic RTL video library that follows YouTube channels and public playlists, org
 
 ## Repository baseline
 
-The four application files were recovered from `/app` on the deployed Fly machine on 2026-10-17. They retain their original bytes. Git history, the original Dockerfile, tests, and build context were unavailable from that directory. The Dockerfile and Fly configuration here are reconstructed; the audit records exactly what was inspected. Production databases, user information, and secret values were not downloaded.
+The four application files were recovered from `/app` on the deployed Fly machine on 2026-10-17. The initial commit preserves their original bytes; subsequent fixes are recorded in [implementation progress](docs/CHANGELOG.md). Git history, the original Dockerfile, tests, and build context were unavailable from that directory. The Dockerfile and Fly configuration here are reconstructed; the audit records exactly what was inspected. Production databases, user information, and secret values were not downloaded.
 
 ## Run locally
 

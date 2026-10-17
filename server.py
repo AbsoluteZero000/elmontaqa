@@ -237,7 +237,7 @@ def parse_playlist_id(value):
         raise ValueError('أدخل رابط قائمة تشغيل YouTube عامًا أو معرّف القائمة.')
     return playlist_id
 
-def youtube_playlist_feed(playlist_id,start_index=1,include_details=False):
+def youtube_playlist_feed(playlist_id,start_index=1,include_details=False,known_video_ids=()):
     url='https://www.youtube.com/playlist?list='+urllib.parse.quote(playlist_id)
     try:
         options={'extract_flat':'in_playlist','skip_download':True,'quiet':True,'no_warnings':True,'ignoreerrors':True}
@@ -250,7 +250,7 @@ def youtube_playlist_feed(playlist_id,start_index=1,include_details=False):
     try:
         for entry in entries:
             if not entry or not entry.get('id'):continue
-            full=extractor.extract_info('https://www.youtube.com/watch?v='+urllib.parse.quote(entry['id'],safe=''),download=False) if extractor else entry
+            full=extractor.extract_info('https://www.youtube.com/watch?v='+urllib.parse.quote(entry['id'],safe=''),download=False) if extractor and entry['id'] not in known_video_ids else entry
             if not full:continue
             timestamp=full.get('timestamp') if include_details else None
             try:published=datetime.fromtimestamp(float(timestamp),tz=datetime.now().astimezone().tzinfo).isoformat() if timestamp else datetime.now().astimezone().isoformat()
@@ -632,7 +632,11 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     # Playlist order/count and upload dates do not identify new membership.
                     # Reconcile the full membership against the baseline captured on add.
-                    _,feed_items,total_count=youtube_playlist_feed(playlist['youtube_playlist_id'],1,True)
+                    con=db()
+                    known_video_ids={r['video_id'] for r in con.execute('SELECT video_id FROM user_playlist_seen WHERE user_id=? AND playlist_id=?',(user['id'],playlist['id']))}
+                    known_video_ids.update(r['video_id'] for r in con.execute('SELECT video_id FROM user_videos WHERE user_id=?',(user['id'],)))
+                    con.close()
+                    _,feed_items,total_count=youtube_playlist_feed(playlist['youtube_playlist_id'],1,True,known_video_ids=known_video_ids)
                     checkpoint=playlist['last_video_published_at'] or datetime.fromtimestamp(playlist['created_at'],tz=datetime.now().astimezone().tzinfo).isoformat()
                     latest_published=checkpoint
                     for video in feed_items:
