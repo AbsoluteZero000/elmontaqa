@@ -16,3 +16,9 @@ The hashes in AUDIT.md describe the recovered initial commit, not subsequently e
 - Initial baseline videos remain excluded. Reorders and repeated syncs do not re-export; shared library videos gain source links without duplicate export. Failed exports remain eligible for retry.
 - Fixtures cover head/middle/tail inserts, same-length replacement, old upload dates, reordering, existing baseline, failed exports and shared sources.
 - Full extraction currently includes video details for baseline items, so large-playlist sync can take longer. Bounded discovery jobs/detail caching are still planned, as are durable cross-request sync serialization and Notion write reconciliation. No deployment performed.
+
+## 2026-10-17 — validate JSON request boundaries
+
+- POST handlers now receive JSON objects only; malformed JSON, arrays, scalars and null return a structured 400 response rather than reaching dictionary-only routing code.
+- Negative/nondecimal/oversized lengths, ambiguous Content-Length headers, transfer encoding and non-JSON body types are rejected before reading the body. Incomplete body reads have a 10-second timeout.
+- Regression tests cover invalid body shapes, lengths, media types and transfer encoding and verify rejected logout requests leave the session active. Baseline authentication checks still pass.

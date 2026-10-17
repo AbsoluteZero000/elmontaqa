@@ -124,6 +124,26 @@ class WatchedDeletionTests(APITest):
         self.assertEqual(self.video_ids(), {"watched"})
 
 
+class RequestValidationTests(APITest):
+    def test_malformed_and_non_object_json_return_json_errors(self):
+        for body in (b'[]', b'null', b'"string"', b'1', b'true', b'{broken'):
+            with self.subTest(body=body):
+                status, result = self.request('/api/me/videos/remove-watched', raw=body)
+                self.assertEqual(status, 400)
+                self.assertIn('error', result)
+
+    def test_invalid_length_and_media_type_are_rejected_without_body_read(self):
+        for headers in ({'Content-Length': '-1'}, {'Content-Length': '20001'},
+                        {'Content-Length': 'abc'}, {'Transfer-Encoding': 'chunked'},
+                        {'Content-Type': 'text/plain'}):
+            with self.subTest(headers=headers):
+                status, result = self.request('/api/logout', raw=b'{}', headers=headers)
+                self.assertEqual(status, 400)
+                self.assertIn('error', result)
+        # Rejected requests must not log the user out.
+        self.assertEqual(self.request('/api/me')[1]['user']['id'], 1)
+
+
 class PlaylistSyncTests(APITest):
     @staticmethod
     def video(video_id):

@@ -275,9 +275,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(302); self.send_header('Location',location); self.send_header('Cache-Control','no-store'); self.send_header('Referrer-Policy','same-origin'); self.end_headers()
     def read_json(self):
         try:
-            n=int(self.headers.get('Content-Length','0'))
+            lengths=self.headers.get_all('Content-Length',[])
+            if self.headers.get('Transfer-Encoding') or len(lengths)>1:return None
+            length=lengths[0] if lengths else '0'
+            if not re.fullmatch(r'[0-9]{1,5}',length):return None
+            n=int(length)
             if n>20000:return None
-            return json.loads(self.rfile.read(n) or b'{}')
+            if n and self.headers.get_content_type()!='application/json':return None
+            # Bound incomplete-body reads as well as their size. Negative lengths
+            # must never reach read(), where they mean read until EOF.
+            self.connection.settimeout(10)
+            raw=self.rfile.read(n)
+            if len(raw)!=n:return None
+            value=json.loads(raw or b'{}')
+            return value if isinstance(value,dict) else None
         except Exception:return None
     def session(self):
         cookie=SimpleCookie(self.headers.get('Cookie','')); morsel=cookie.get('session')
