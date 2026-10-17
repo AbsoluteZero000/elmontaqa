@@ -30,9 +30,11 @@ The baseline sets `Secure` session cookies unconditionally. Use an HTTPS develop
 
 ```bash
 python3 tools/check_baseline.py
+python3 -m unittest discover -s tests -v
+node --test tests/ui.test.cjs
 ```
 
-The checker uses a temporary database, generated secret, synthetic accounts, and no external integration calls. It checks public endpoints, authentication, logout, and user isolation.
+The checker uses a temporary database, generated secret, synthetic accounts, and no external integration calls. It checks public endpoints, authentication, logout, and user isolation. Regression tests cover deletion scope, playlist membership, and invalid requests with mocked integrations. Node 22+ runs page-script behavioral checks using a minimal DOM adapter.
 
 ## Deployment
 

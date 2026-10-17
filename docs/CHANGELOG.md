@@ -22,3 +22,11 @@ The hashes in AUDIT.md describe the recovered initial commit, not subsequently e
 - POST handlers now receive JSON objects only; malformed JSON, arrays, scalars and null return a structured 400 response rather than reaching dictionary-only routing code.
 - Negative/nondecimal/oversized lengths, ambiguous Content-Length headers, transfer encoding and non-JSON body types are rejected before reading the body. Incomplete body reads have a 10-second timeout.
 - Regression tests cover invalid body shapes, lengths, media types and transfer encoding and verify rejected logout requests leave the session active. Baseline authentication checks still pass.
+
+## 2026-10-17 — signed-out state and visible refresh feedback
+
+- Session lookup now precedes private feed loading, removing the expected anonymous 401/error flash. Signed-out users receive an explanatory empty state.
+- Login opens login, with consistent name-field requirements/password autocomplete when switching to registration. Settings/refresh also initialize the login dialog consistently.
+- Main and settings refresh actions share visible progress/error feedback and both disable during one page's sync. Successful sync updates the displayed time; a feed reload failure remains visible.
+- Corrected channel-removal help to agree with deletion behavior.
+- Four Node behavioral tests execute the actual page script with a minimal DOM adapter; CI runs them. Real browser rendering, keyboard accessibility and cross-tab/server sync serialization remain outside this change.
