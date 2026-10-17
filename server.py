@@ -568,11 +568,25 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/me/videos/remove-watched':
             user=self.session()
             if not user:return self.send_json(401,{'error':'سجّل الدخول أولًا'})
-            con=db();rows=con.execute('SELECT video_id,notion_page_id FROM user_videos WHERE user_id=? AND watched=1',(user['id'],)).fetchall();integ=con.execute('SELECT notion_token_enc FROM user_integrations WHERE user_id=?',(user['id'],)).fetchone();con.close()
-            if not rows:return self.send_json(200,{'ok':True,'count':0})
+            video_ids=data.get('video_ids')
+            if (not isinstance(video_ids,list) or not 1<=len(video_ids)<=100
+                or any(not isinstance(value,str) or not value or len(value)>100 for value in video_ids)
+                or len(set(video_ids))!=len(video_ids)):
+                return self.send_json(400,{'error':'اختر من 1 إلى 100 فيديو مشاهدة لإزالتها'})
+            placeholders=','.join('?' for _ in video_ids)
+            con=db();rows=con.execute('SELECT video_id,notion_page_id FROM user_videos WHERE user_id=? AND watched=1 AND video_id IN ('+placeholders+')',(user['id'],*video_ids)).fetchall();integ=con.execute('SELECT notion_token_enc FROM user_integrations WHERE user_id=?',(user['id'],)).fetchone();con.close()
+            if len(rows)!=len(video_ids):
+                return self.send_json(409,{'error':'تغيّرت الفيديوهات المحددة. حدّث المكتبة وراجع اختيارك قبل الإزالة'})
             token=unseal_text(integ['notion_token_enc']) if integ else '';errors=notion_archive_pages(token,[r['notion_page_id'] for r in rows]) if token else ['حساب Notion غير متصل']
             if errors:return self.send_json(409,{'error':'تعذر حذف الفيديوهات المشاهدة من Notion، لذلك بقيت في المكتبة. فعّل صلاحية Update content في اتصال Notion ثم أعد ربطه، وبعدها حاول مجددًا. '+errors[0]})
-            con=db();con.execute('DELETE FROM user_video_sources WHERE user_id=? AND video_id IN (SELECT video_id FROM user_videos WHERE user_id=? AND watched=1)',(user['id'],user['id']));con.execute('DELETE FROM user_videos WHERE user_id=? AND watched=1',(user['id'],));con.commit();con.close();return self.send_json(200,{'ok':True,'count':len(rows)})
+            con=db()
+            try:
+                con.execute('BEGIN IMMEDIATE')
+                con.execute('DELETE FROM user_video_sources WHERE user_id=? AND video_id IN ('+placeholders+')',(user['id'],*video_ids))
+                removed=con.execute('DELETE FROM user_videos WHERE user_id=? AND video_id IN ('+placeholders+')',(user['id'],*video_ids)).rowcount
+                con.commit()
+            finally:con.close()
+            return self.send_json(200,{'ok':True,'count':removed})
         if path=='/api/me/sync':
             user=self.session()
             if not user:return self.send_json(401,{'error':'سجّل الدخول أولًا'})
