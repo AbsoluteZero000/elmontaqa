@@ -10,7 +10,7 @@ flyctl volumes list -a elmontaqa
 flyctl logs -a elmontaqa --no-tail
 ```
 
-The app belongs to `muaaz-amr`. Do not create another app with `fly launch` as part of routine updates. An idle stopped machine is expected with the present configuration.
+The app belongs to `muaaz-amr`. Do not create another app with `fly launch` as part of routine updates. One machine is now kept running in the primary region to avoid idle cold starts.
 
 ## Before the first deployment from this repository
 
@@ -32,3 +32,13 @@ Record the previous image and release before a deployment. A rollback of code do
 - Track DB/WAL size, memory, response latency, sync queue age, failed external requests, failed logins, and backup age.
 - If background sync is introduced, ensure an independent scheduler/worker remains runnable while the web machine auto-stops; do not assume an in-process timer runs on a stopped machine.
 - Additional SQLite machines require a replication/single-writer design. Scaling count alone creates independent volumes, not replicas.
+
+
+## 2026-10-18 performance deployment recovery
+
+Previous image: `registry.fly.io/elmontaqa:deployment-01M540KES32P5S6Z44M47FQF59`.
+A consistent encrypted backup was created and restore-checked on the attached volume at `/data/pre-performance-20261018-090140.sqlite3.aesgcm`. It is a local recovery copy, not an offsite backup. Preserve the current APP_SECRET.
+
+Backup format: first 12 bytes are the AES-GCM nonce; remaining bytes are ciphertext with tag. The key is SHA-256 of APP_SECRET bytes followed by `elmontaqa-backup-v1`; associated data is `elmontaqa-backup-v1`. Decrypt into a separate temporary database file, then open with SQLite and verify integrity. Never overwrite the active database during verification.
+
+This performance change adds an index and keeps existing tables compatible with the previous image. A code rollback can use `flyctl deploy -a elmontaqa --image registry.fly.io/elmontaqa:deployment-01M540KES32P5S6Z44M47FQF59 --ha=false`; it does not require restoring the database. Restoring the old cold-start behavior also requires setting `min_machines_running` to 0 before deployment.

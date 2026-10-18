@@ -157,6 +157,20 @@ class PlaylistSyncTests(APITest):
             status, _ = self.request("/api/me/playlists", {"playlist": "PLfixture123456", "category_id": 1})
         self.assertEqual(status, 201)
 
+    def test_large_unchanged_playlist_avoids_per_video_database_work(self):
+        baseline = [f"baseline-{i}" for i in range(3000)]
+        self.add_playlist(baseline)
+        items = [self.video(v) for v in baseline]
+        with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", items, len(items))), \
+             patch.object(app, "db", wraps=app.db) as connect, \
+             patch.object(app, "notion_create_video") as export:
+            status, result = self.request("/api/me/sync", {})
+            self.assertEqual(status, 200)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["count"], 0)
+            self.assertLess(connect.call_count, 10)
+            export.assert_not_called()
+
     def test_new_membership_is_imported_at_any_position_regardless_of_upload_date(self):
         self.add_playlist(["baseline-a", "baseline-b"])
         exports = []
@@ -205,6 +219,74 @@ class PlaylistSyncTests(APITest):
         self.assertEqual(con.execute("SELECT COUNT(*) FROM user_video_sources WHERE user_id=1 AND video_id='shared' AND source_type='playlist'").fetchone()[0], 1)
         con.close()
 
+
+class StatisticsTests(APITest):
+    def test_watch_time_is_private_monotonic_and_persists_after_video_removal(self):
+        self.add_video('own-video')
+        self.add_video('foreign-video', uid=2)
+        payload={'session_id':'fixture-session-0001','video_id':'own-video','seconds':0}
+        self.assertEqual(self.request('/api/me/watch-time',payload)[0],200)
+        with patch.object(app.time,'time',return_value=int(time.time())+100):
+            for seconds in (20,20,10,40):
+                self.assertEqual(self.request('/api/me/watch-time',{**payload,'seconds':seconds})[0],200)
+        self.assertEqual(self.request('/api/me/watch-time',{**payload,'video_id':'foreign-video'})[0],404)
+        self.assertEqual(self.request('/api/me/watch-time',{**payload,'seconds':999})[0],400)
+        status,stats=self.request('/api/me/statistics')
+        self.assertEqual(status,200)
+        self.assertEqual(stats['totals'],{'videos':1,'watched':1,'watch_seconds':40,'played_videos':1})
+        self.assertEqual(len(stats['categories']),1)
+        self.assertEqual(stats['categories'][0]['watch_seconds'],40)
+        self.assertEqual(stats['categories'][0]['videos'],1)
+        con=app.db();con.execute("DELETE FROM user_videos WHERE user_id=1");con.execute("DELETE FROM user_categories WHERE user_id=1");con.commit();con.close()
+        stats=self.request('/api/me/statistics')[1]
+        self.assertEqual(stats['totals']['watch_seconds'],40)
+        self.assertEqual(stats['totals']['videos'],0)
+        self.assertEqual(stats['categories'],[])
+        self.cookie=''
+        self.assertEqual(self.request('/api/me/statistics')[0],401)
+        self.assertEqual(self.request('/api/me/watch-time',payload)[0],401)
+
+    def test_first_heartbeat_can_arrive_after_a_network_delay(self):
+        self.add_video('a')
+        status,result=self.request('/api/me/watch-time',{'session_id':'delayed-session-0001','video_id':'a','seconds':25})
+        self.assertEqual((status,result['seconds']),(200,25))
+        self.assertEqual(self.request('/api/me/statistics')[1]['totals']['watch_seconds'],25)
+
+    def test_invalid_timing_reports_and_session_reassignment_are_rejected(self):
+        self.add_video('a');self.add_video('b')
+        payload={'session_id':'fixture-session-0001','video_id':'a','seconds':0}
+        for change in ({'seconds':-1},{'seconds':True},{'seconds':1.5},{'seconds':86401},{'session_id':'bad'}):
+            self.assertEqual(self.request('/api/me/watch-time',{**payload,**change})[0],400)
+        self.assertEqual(self.request('/api/me/watch-time',payload)[0],200)
+        self.assertEqual(self.request('/api/me/watch-time',{**payload,'video_id':'b'})[0],409)
+
+
+class DatabasePerformanceTests(unittest.TestCase):
+    def test_reads_do_not_wait_for_an_active_writer(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(app, "DB_PATH", str(Path(tmp) / "db.sqlite3")):
+            writer = app.db()
+            writer.execute("BEGIN IMMEDIATE")
+            errors = []
+            def read():
+                try:
+                    con = app.db()
+                    try:
+                        con.execute("SELECT COUNT(*) FROM users").fetchone()
+                    finally:
+                        con.close()
+                except Exception as exc:
+                    errors.append(exc)
+            thread = threading.Thread(target=read)
+            thread.start()
+            try:
+                thread.join(timeout=2)
+                completed_while_write_locked = not thread.is_alive()
+            finally:
+                writer.rollback()
+                writer.close()
+                thread.join(timeout=5)
+            self.assertTrue(completed_while_write_locked)
+            self.assertEqual(errors, [])
 
 class PlaylistExtractionTests(unittest.TestCase):
     def test_only_unseen_videos_need_detail_extraction(self):

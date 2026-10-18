@@ -1,4 +1,5 @@
 import os, json, sqlite3, hashlib, hmac, secrets, time, re, base64, urllib.request, urllib.parse, urllib.error
+import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -27,15 +28,34 @@ CREATE TABLE IF NOT EXISTS videos (video_id TEXT PRIMARY KEY, title TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS user_integrations (user_id INTEGER PRIMARY KEY, notion_token_enc TEXT NOT NULL, notion_page_id TEXT NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id));
 CREATE TABLE IF NOT EXISTS notion_oauth_states (state TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at INTEGER NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id));
 CREATE TABLE IF NOT EXISTS user_categories (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, notion_database_id TEXT NOT NULL, notion_data_source_id TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(user_id,name), FOREIGN KEY(user_id) REFERENCES users(id));
+CREATE TABLE IF NOT EXISTS watch_sessions (user_id INTEGER NOT NULL, session_id TEXT NOT NULL, video_id TEXT NOT NULL, category_id INTEGER, seconds INTEGER NOT NULL DEFAULT 0, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(user_id,session_id), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(category_id) REFERENCES user_categories(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS user_channels (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, youtube_channel_id TEXT NOT NULL, title TEXT NOT NULL, category_id INTEGER NOT NULL, created_at INTEGER NOT NULL, last_video_id TEXT NOT NULL DEFAULT '', last_video_published_at TEXT NOT NULL DEFAULT '', UNIQUE(user_id,youtube_channel_id), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(category_id) REFERENCES user_categories(id));
 CREATE TABLE IF NOT EXISTS user_playlists (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, youtube_playlist_id TEXT NOT NULL, title TEXT NOT NULL, category_id INTEGER NOT NULL, created_at INTEGER NOT NULL, last_item_count INTEGER NOT NULL DEFAULT 0, last_video_published_at TEXT NOT NULL DEFAULT '', UNIQUE(user_id,youtube_playlist_id), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(category_id) REFERENCES user_categories(id));
 CREATE TABLE IF NOT EXISTS user_playlist_seen (user_id INTEGER NOT NULL, playlist_id INTEGER NOT NULL, video_id TEXT NOT NULL, seen_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id,playlist_id,video_id), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(playlist_id) REFERENCES user_playlists(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS user_video_sources (user_id INTEGER NOT NULL, video_id TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(user_id,video_id,source_type,source_id), FOREIGN KEY(user_id) REFERENCES users(id));
 CREATE TABLE IF NOT EXISTS user_videos (user_id INTEGER NOT NULL, video_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, channel_id TEXT NOT NULL, channel_title TEXT NOT NULL, category_id INTEGER NOT NULL, published_at TEXT NOT NULL, thumbnail_url TEXT, video_url TEXT NOT NULL, notion_page_id TEXT NOT NULL, watched INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, PRIMARY KEY(user_id,video_id), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(category_id) REFERENCES user_categories(id));
 '''
+_initialized_databases = set()
+_database_init_lock = threading.Lock()
+
 def db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    con=sqlite3.connect(DB_PATH,timeout=20); con.row_factory=sqlite3.Row; con.execute('PRAGMA journal_mode=WAL'); con.execute('PRAGMA foreign_keys=ON'); con.executescript(SCHEMA)
+    con=sqlite3.connect(DB_PATH,timeout=20); con.row_factory=sqlite3.Row
+    con.execute('PRAGMA foreign_keys=ON')
+    try:
+        if DB_PATH not in _initialized_databases:
+            with _database_init_lock:
+                if DB_PATH not in _initialized_databases:
+                    initialize_database(con)
+                    _initialized_databases.add(DB_PATH)
+        return con
+    except Exception:
+        con.close()
+        raise
+
+def initialize_database(con):
+    # Migrations run once per database per process, never on ordinary reads.
+    con.execute('PRAGMA journal_mode=WAL'); con.executescript(SCHEMA)
     cols={r['name'] for r in con.execute('PRAGMA table_info(user_integrations)')}
     if 'notion_refresh_token_enc' not in cols: con.execute('ALTER TABLE user_integrations ADD COLUMN notion_refresh_token_enc TEXT')
     if 'workspace_name' not in cols: con.execute('ALTER TABLE user_integrations ADD COLUMN workspace_name TEXT')
@@ -50,7 +70,9 @@ def db():
     seen_cols={r['name'] for r in con.execute('PRAGMA table_info(user_playlist_seen)')}
     if 'seen_at' not in seen_cols: con.execute('ALTER TABLE user_playlist_seen ADD COLUMN seen_at INTEGER NOT NULL DEFAULT 0')
     con.execute('UPDATE user_playlist_seen SET seen_at=COALESCE((SELECT created_at FROM user_playlists WHERE id=user_playlist_seen.playlist_id),0) WHERE seen_at=0')
-    con.commit(); return con
+    con.execute('CREATE INDEX IF NOT EXISTS user_videos_feed ON user_videos(user_id,published_at DESC)')
+    con.execute('CREATE INDEX IF NOT EXISTS watch_sessions_category ON watch_sessions(user_id,category_id)')
+    con.commit()
 
 def crypto(): return AESGCM(hashlib.sha256(APP_SECRET.encode()+b'elmontaqa-integration-config-v1').digest())
 def seal(value):
@@ -342,6 +364,22 @@ class Handler(BaseHTTPRequestHandler):
             user=self.session()
             if not user:return self.send_json(401,{'error':'سجّل الدخول لعرض مكتبتك'})
             con=db(); cats=[dict(r) for r in con.execute('SELECT id,name FROM user_categories WHERE user_id=? ORDER BY id',(user['id'],))]; rows=con.execute('SELECT v.video_id,v.title,v.channel_title,v.category_id,c.name AS category,v.published_at,v.thumbnail_url,v.video_url,v.watched FROM user_videos v JOIN user_categories c ON c.id=v.category_id WHERE v.user_id=? ORDER BY v.published_at DESC LIMIT 100',(user['id'],)).fetchall(); con.close(); return self.send_json(200,{'categories':cats,'videos':[dict(r) for r in rows]})
+        if path=='/api/me/statistics':
+            user=self.session()
+            if not user:return self.send_json(401,{'error':'سجّل الدخول لعرض إحصائياتك'})
+            con=db()
+            try:
+                totals=dict(con.execute('SELECT COUNT(*) AS videos,COALESCE(SUM(watched),0) AS watched FROM user_videos WHERE user_id=?',(user['id'],)).fetchone())
+                totals.update(dict(con.execute('SELECT COALESCE(SUM(seconds),0) AS watch_seconds,COUNT(DISTINCT CASE WHEN seconds>0 THEN video_id END) AS played_videos FROM watch_sessions WHERE user_id=?',(user['id'],)).fetchone()))
+                categories=[dict(row) for row in con.execute("""SELECT c.id,c.name,
+                    (SELECT COUNT(*) FROM user_videos v WHERE v.user_id=c.user_id AND v.category_id=c.id) AS videos,
+                    (SELECT COALESCE(SUM(watched),0) FROM user_videos v WHERE v.user_id=c.user_id AND v.category_id=c.id) AS watched,
+                    (SELECT COALESCE(SUM(seconds),0) FROM watch_sessions w WHERE w.user_id=c.user_id AND w.category_id=c.id) AS watch_seconds,
+                    (SELECT COUNT(*) FROM user_channels ch WHERE ch.user_id=c.user_id AND ch.category_id=c.id) AS channels,
+                    (SELECT COUNT(*) FROM user_playlists p WHERE p.user_id=c.user_id AND p.category_id=c.id) AS playlists
+                    FROM user_categories c WHERE c.user_id=? ORDER BY watch_seconds DESC,c.name""",(user['id'],))]
+            finally:con.close()
+            return self.send_json(200,{'totals':totals,'categories':categories})
         if path=='/api/me/notion':
             user=self.session()
             if not user:return self.send_json(401,{'error':'سجّل الدخول أولًا'})
@@ -354,7 +392,7 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/admin/feedback':
             if not self.need_admin():return
             con=db(); rows=con.execute('SELECT feedback.message,feedback.created_at,users.name,users.email FROM feedback LEFT JOIN users ON users.id=feedback.user_id ORDER BY feedback.created_at DESC LIMIT 500').fetchall(); con.close(); return self.send_json(200,{'feedback':[dict(r) for r in rows]})
-        if path=='/':
+        if path in ('/','/statistics'):
             try:
                 with open('index.html','rb') as f: body=f.read()
                 self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.send_header('X-Content-Type-Options','nosniff'); self.send_header('Referrer-Policy','same-origin'); self.end_headers(); self.wfile.write(body)
@@ -568,6 +606,29 @@ class Handler(BaseHTTPRequestHandler):
             if delete_ids:
                 placeholders=','.join('?' for _ in delete_ids);con.execute('DELETE FROM user_video_sources WHERE user_id=? AND video_id IN ('+placeholders+')',(user['id'],*delete_ids));con.execute('DELETE FROM user_videos WHERE user_id=? AND video_id IN ('+placeholders+')',(user['id'],*delete_ids))
             con.execute('DELETE FROM user_channels WHERE id=? AND user_id=?',(channel_id,user['id']));con.commit();con.close();return self.send_json(200,{'ok':True,'removed_videos':len(delete_ids),'kept_shared_videos':len(keep_ids)})
+        if path=='/api/me/watch-time':
+            user=self.session()
+            if not user:return self.send_json(401,{'error':'سجّل الدخول أولًا'})
+            session_id=data.get('session_id');video_id=data.get('video_id');seconds=data.get('seconds')
+            if (not isinstance(session_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{16,64}',session_id)
+                or not isinstance(video_id,str) or not 1<=len(video_id)<=100
+                or type(seconds) is not int or not 0<=seconds<=86400):
+                return self.send_json(400,{'error':'بيانات وقت المشاهدة غير صالحة'})
+            now=int(time.time());con=db()
+            try:
+                con.execute('BEGIN IMMEDIATE')
+                video=con.execute('SELECT category_id FROM user_videos WHERE user_id=? AND video_id=?',(user['id'],video_id)).fetchone()
+                if not video:return self.send_json(404,{'error':'الفيديو غير موجود'})
+                previous=con.execute('SELECT video_id,seconds,started_at FROM watch_sessions WHERE user_id=? AND session_id=?',(user['id'],session_id)).fetchone()
+                if previous and previous['video_id']!=video_id:return self.send_json(409,{'error':'جلسة المشاهدة مرتبطة بفيديو آخر'})
+                # A first heartbeat may be delayed by a temporary network failure.
+                started_at=previous['started_at'] if previous else now-seconds
+                if seconds>max(0,now-started_at)+5:return self.send_json(400,{'error':'وقت المشاهدة يتجاوز مدة الجلسة'})
+                seconds=max(seconds,previous['seconds'] if previous else 0)
+                con.execute('INSERT INTO watch_sessions(user_id,session_id,video_id,category_id,seconds,started_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET seconds=MAX(watch_sessions.seconds,excluded.seconds),updated_at=excluded.updated_at',(user['id'],session_id,video_id,video['category_id'],seconds,started_at,now))
+                con.commit()
+            finally:con.close()
+            return self.send_json(200,{'ok':True,'seconds':seconds})
         if path=='/api/me/videos/watched':
             user=self.session()
             if not user:return self.send_json(401,{'error':'سجّل الدخول أولًا'})
@@ -633,8 +694,9 @@ class Handler(BaseHTTPRequestHandler):
                     # Playlist order/count and upload dates do not identify new membership.
                     # Reconcile the full membership against the baseline captured on add.
                     con=db()
-                    known_video_ids={r['video_id'] for r in con.execute('SELECT video_id FROM user_playlist_seen WHERE user_id=? AND playlist_id=?',(user['id'],playlist['id']))}
-                    known_video_ids.update(r['video_id'] for r in con.execute('SELECT video_id FROM user_videos WHERE user_id=?',(user['id'],)))
+                    seen_video_ids={r['video_id'] for r in con.execute('SELECT video_id FROM user_playlist_seen WHERE user_id=? AND playlist_id=?',(user['id'],playlist['id']))}
+                    existing_video_ids={r['video_id'] for r in con.execute('SELECT video_id FROM user_videos WHERE user_id=?',(user['id'],))}
+                    known_video_ids=seen_video_ids | existing_video_ids
                     con.close()
                     _,feed_items,total_count=youtube_playlist_feed(playlist['youtube_playlist_id'],1,True,known_video_ids=known_video_ids)
                     checkpoint=playlist['last_video_published_at'] or datetime.fromtimestamp(playlist['created_at'],tz=datetime.now().astimezone().tzinfo).isoformat()
@@ -642,6 +704,8 @@ class Handler(BaseHTTPRequestHandler):
                     for video in feed_items:
                         observed_at=int(time.time())
                         latest_published=later_timestamp(latest_published,video['published_at'])
+                        # Baseline and removed videos need no per-item DB connection.
+                        if video['video_id'] in seen_video_ids and video['video_id'] not in existing_video_ids:continue
                         con=db();seen=con.execute('SELECT 1 FROM user_playlist_seen WHERE user_id=? AND playlist_id=? AND video_id=?',(user['id'],playlist['id'],video['video_id'])).fetchone();exists=con.execute('SELECT 1 FROM user_videos WHERE user_id=? AND video_id=?',(user['id'],video['video_id'])).fetchone()
                         if seen:
                             if exists:con.execute('INSERT OR IGNORE INTO user_video_sources(user_id,video_id,source_type,source_id,created_at) VALUES(?,?,?,?,?)',(user['id'],video['video_id'],'playlist',str(playlist['id']),int(time.time())));con.commit()

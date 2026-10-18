@@ -36,3 +36,24 @@ The hashes in AUDIT.md describe the recovered initial commit, not subsequently e
 - The full membership scan now fetches detailed metadata only for IDs absent from the playlist baseline and existing library. Known IDs still participate in source reconciliation.
 - This removes the repeated per-video extraction cost introduced by the correctness fix above; discovering the full membership still has a cost for large playlists and remains synchronous.
 - An extraction fixture verifies that baseline/shared videos skip detailed requests while new videos retain their actual upload date. Integration regressions verify membership discovery still scans from the start.
+
+
+## 2026-10-18 — reduce database contention and cold starts
+
+- Production inspection found 16 followed channels, two playlists and 2,992 baseline/seen entries. Every database connection previously ran schema checks and a backfill UPDATE; unchanged playlist scans opened a connection for each baseline entry.
+- Initialize schema, backfills and WAL once per database per process under a lock. Ordinary connections only enable foreign keys. Add a user/published-date feed index.
+- Skip per-entry database access for already-seen playlist videos absent from the library, retaining reconciliation for existing library videos and retries for failed exports.
+- Keep one Fly machine running in the primary region to avoid recurring idle cold starts; this increases compute usage. Add a /health deployment check.
+- Validation: 11 Python regressions, Node page-script checks and the isolated baseline checker pass. New regressions cover reads during an active writer and a 3,000-entry unchanged playlist with fewer than 10 connections.
+- Local contention reproduction: reads waited 1.03 seconds for the writer before the change, versus 0.0004 seconds during the write lock after it. Initial production cold homepage TTFB was 2.45 seconds; warm health TTFB was 0.28 seconds. These are individual samples, not a production sync benchmark.
+- YouTube scans and sequential Notion exports remain synchronous. Their external network time is still a limit, especially across many followed sources.
+
+
+## 2026-10-18 — in-page playback and viewing statistics
+
+- Video thumbnails and play buttons open a responsive native dialog with a YouTube privacy-enhanced embed, keyboard focus management, Escape/backdrop/close controls and a fallback link for videos that prohibit embedding. The iframe is created only on demand and removed on close.
+- Lazily load the official IFrame API and count elapsed playing time, excluding pause and buffering. Send cumulative session heartbeats every 15 seconds and on state changes/close/page exit; monotonic server updates make retries idempotent. Timing is browser-reported, bounded telemetry; abrupt shutdown can lose the final unsaved interval.
+- Add `/statistics` with Arabic RTL navigation, watch-time and library metrics, completion ring, category time bars, and category cards. Show explicit empty, signed-out and error states. Watch time starts with this release; prior external viewing is unavailable.
+- Store user-scoped watch sessions separately from library videos so recorded time survives video deletion. Removing a category clears its history association while preserving overall time. Add a user/category history index.
+- Validate input types, session identity, user ownership and elapsed time on updates. Test delayed first heartbeats, duplicate/out-of-order updates, removal retention and private statistics.
+- Validation: 14 Python regressions, seven Node behavioral checks, baseline authentication checks, and four Chromium desktop/mobile fixture checks. Browser checks cover layout overflow, statistics, dialog focus and iframe cleanup; third-party playback availability is outside fixture tests.

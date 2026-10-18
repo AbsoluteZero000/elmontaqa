@@ -1,6 +1,6 @@
 # المُنْتَقَى — Elmontaqa
 
-Arabic RTL video library that follows YouTube channels and public playlists, organizes videos by category, tracks watched videos, and exports them to a user's Notion workspace.
+Arabic RTL video library that follows YouTube channels and public playlists, organizes videos by category, plays videos in the site, tracks watch time and category statistics, and exports videos to a user's Notion workspace.
 
 - Live app: https://elmontaqa.fly.dev
 - Fly organization: `muaaz-amr` (not the personal organization)
@@ -32,9 +32,17 @@ The baseline sets `Secure` session cookies unconditionally. Use an HTTPS develop
 python3 tools/check_baseline.py
 python3 -m unittest discover -s tests -v
 node --test tests/ui.test.cjs
+# Optional: Chromium desktop/mobile rendering and native-dialog checks
+python3 tools/check_browser_ui.py
 ```
 
 The checker uses a temporary database, generated secret, synthetic accounts, and no external integration calls. It checks public endpoints, authentication, logout, and user isolation. Regression tests cover deletion scope, playlist membership, and invalid requests with mocked integrations. Node 22+ runs page-script behavioral checks using a minimal DOM adapter.
+
+## Watching and statistics
+
+Click a video thumbnail or «تشغيل الفيديو» to open the in-page player. The «الإحصائيات» page at `/statistics` shows your library completion, recorded watch time, and category summaries linked back to the library.
+
+Watch time is recorded from player playback events, saved every 15 seconds and on pause/close, and retained when a video is removed. Paused/buffering time is excluded. Past YouTube viewing cannot be recovered. Abrupt browser shutdown or connectivity failures can lose the final unsaved interval. Some owners restrict embedding; the player includes a YouTube fallback link.
 
 ## Deployment
 

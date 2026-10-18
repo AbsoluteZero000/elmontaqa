@@ -11,3 +11,13 @@ Passed:
 - `.env` and SQLite data paths are ignored by Git.
 
 The checker used installed local dependencies; it does not establish exact production dependency versions. The Dockerfile is reconstructed and has not been built/verified in this initialization. Authenticated production flows, actual YouTube extraction, Notion OAuth/export/archive, backup restoration, load tests and browser visual/accessibility checks remain future validation work. No production data mutations or deployment were performed.
+
+
+## 2026-10-18 performance, playback and statistics
+
+- `python3 -m unittest discover -s tests -v`: 14 regressions for integration behavior, input validation, database contention, large-playlist work, and watch-time ownership/idempotence/retention.
+- `node tests/ui.test.cjs`: seven page-script behavior checks, including pause/resume/close timing and statistics states.
+- `python3 tools/check_baseline.py`: passed with isolated synthetic accounts and temporary state.
+- `python3 tools/check_browser_ui.py`: Chromium desktop/mobile screenshots reviewed; statistics and player checks passed at 1440px and 390px. Uses synthetic API data and a player stub; actual YouTube playback is not certified by this checker.
+- Production diagnosis: 2.45s cold homepage TTFB versus 0.28s warm health TTFB; per-connection migrations/backfill caused reads to wait for SQLite writers. A synthetic writer-lock reproduction improved from 1.03s to 0.0004s after moving initialization out of ordinary connections. The unchanged 3,000-entry playlist fixture now uses fewer than ten database connections.
+- Encrypted SQLite backup created on the production volume and restored into a separate temporary file for integrity verification before deployment. See OPERATIONS.md for format and rollback details. No authenticated production sync or Notion mutations were used for verification.
