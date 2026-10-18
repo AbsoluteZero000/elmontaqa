@@ -66,3 +66,12 @@ The hashes in AUDIT.md describe the recovered initial commit, not subsequently e
 - On startup, atomically remove integration credentials, OAuth states and obsolete remote-ID columns, while preserving accounts, sessions, categories, subscriptions, playlist membership, videos, watched status and watch time. Historical audit documents remain as provenance; their Notion plans are retired.
 - Verify the old-schema upgrade using a populated fixture and a temporary copy of the actual production database. All account/library/watch-history fingerprints were unchanged in the production rehearsal. A consistent encrypted backup was restore-checked before the upgrade.
 - Regression checks cover the full independent library lifecycle, source-sharing deletion, removed endpoints, user isolation, and migration repeatability. Settings open on Channels and contain only Channels, Playlists and Categories.
+
+
+## 2026-10-18 — default Plyr player and account preference
+
+- Use Plyr 3.8.3 by default and add Settings → Player to switch to the original YouTube embed. Store the preference per account in `user_preferences`, returning it with session/settings/auth responses. Existing users default to Plyr without changing library records.
+- Vendor the pinned JS/CSS/icon sprite and MIT license; serve fixed versioned asset paths with immutable caching. Load player assets only on video open. Use the privacy-enhanced YouTube host in both modes and fall back to the original player if Plyr initialization fails.
+- Adapt playing/pause/buffering/seek/end events to the existing watch-time recorder. Close or switch destroys the instance and saves accumulated time; stale setup and native-dialog close events cannot affect a newly opened player.
+- Add an Arabic player preference form and compact mobile controls. Both options use YouTube underneath; recommendations are not guaranteed to disappear.
+- Validate preference persistence, account isolation, invalid input, lazy asset serving, both playback event adapters, save failure/fallback behavior, and desktop/mobile rendering using the actual bundled Plyr library with a synthetic YouTube SDK.

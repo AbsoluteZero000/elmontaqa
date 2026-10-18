@@ -8,7 +8,7 @@ const path = require('node:path');
 const script = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-async function page({user = null, sync, feed, statistics, settings, pathname = "/"} = {}) {
+async function page({user = null, sync, feed, statistics, settings, player = "plyr", savePlayer, plyrFails = false, pathname = "/"} = {}) {
   const elements = new Map();
   function element(selector) {
     if (!elements.has(selector)) {
@@ -25,23 +25,30 @@ async function page({user = null, sync, feed, statistics, settings, pathname = "
     return elements.get(selector);
   }
   const calls = [];
-  let clock = 0, playerOptions;
+  let clock = 0, playerOptions, plyrOptions, destroyed = 0;
+  const plyrHandlers = {};
   const context = vm.createContext({
-    document: {querySelector: element, querySelectorAll: () => []},
+    document: {querySelector: element, querySelectorAll: () => [], createElement: () => ({remove(){}}), head: {appendChild: node => queueMicrotask(() => node.onload())}},
     location: {search: '', pathname, origin: 'https://example.test'}, history: {replaceState() {}},
     URLSearchParams, crypto: require('node:crypto').webcrypto,
-    performance: {now: () => clock}, setInterval: () => 1, clearInterval() {},
-    window: {confirm: () => true, addEventListener() {}, YT: {Player: function(id, options) {
+    performance: {now: () => clock}, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
+    window: {confirm: () => true, addEventListener() {}, Plyr: function(id, options) {
+      if(plyrFails)throw Error('fixture asset failure');
+      plyrOptions = options; this.playing = false;
+      this.destroy = () => { destroyed++; };
+      this.on = (names, handler) => names.split(' ').forEach(name => { plyrHandlers[name] = handler; });
+    }, YT: {Player: function(id, options) {
       playerOptions = options; this.destroy = () => {}; this.getPlayerState = () => -1;
     }}},
     fetch: async (url, options) => {
       calls.push({url, options});
       let body;
-      if (url === '/api/me') body = {user};
+      if (url === '/api/me') body = {user, player};
       else if (url === '/api/feed') body = feed ? await feed() : {videos: [], categories: []};
       else if (url === '/api/me/statistics') body = statistics;
       else if (url === '/api/me/watch-time') body = {ok: true};
       else if (url === '/api/me/settings') body = settings;
+      else if (url === '/api/me/settings/player') body = savePlayer ? await savePlayer(JSON.parse(options.body)) : JSON.parse(options.body);
       else if (url === '/api/me/sync') body = await sync();
       else throw new Error('Unexpected request: ' + url);
       return {ok: true, json: async () => body};
@@ -49,7 +56,7 @@ async function page({user = null, sync, feed, statistics, settings, pathname = "
   });
   vm.runInContext(script, context);
   await flush();
-  return {element, calls, context, advance: value => { clock += value; }, state: data => playerOptions.events.onStateChange({data})};
+  return {element, calls, context, advance: value => { clock += value; }, state: data => playerOptions ? playerOptions.events.onStateChange({data}) : plyrHandlers[({1:'playing',2:'pause',3:'waiting',0:'ended'})[data]](), plyrOptions: () => plyrOptions, destroyed: () => destroyed};
 }
 
 test('anonymous startup does not request a private feed or show a failure', async () => {
@@ -117,6 +124,8 @@ test('in-page playback counts only playing time and stops on close', async () =>
   vm.runInContext("openVideo('M7lc1UVf-VE')", p.context);
   await flush();
   assert.equal(p.element('#videoPlayer').open, true);
+  assert.equal(p.element('#activePlayerLabel').textContent, 'Plyr');
+  assert.equal(p.plyrOptions().autoplay, true);
   assert.match(p.element('#playerFrame').innerHTML, /youtube-nocookie.com\/embed\/M7lc1UVf-VE/);
   assert.match(p.element('#playerFrame').innerHTML, /Title &lt;safe&gt;/);
   p.state(1); p.advance(12500); p.state(2);
@@ -126,6 +135,7 @@ test('in-page playback counts only playing time and stops on close', async () =>
   await flush();
   assert.equal(p.element('#playerFrame').innerHTML, '');
   assert.equal(p.element('#videoPlayer').open, false);
+  assert.equal(p.destroyed(), 1);
   const reports = p.calls.filter(c => c.url === '/api/me/watch-time').map(c => JSON.parse(c.options.body));
   assert.equal(reports.at(-1).seconds, 16);
   assert.equal(new Set(reports.map(r => r.session_id)).size, 1);
@@ -165,4 +175,47 @@ test('settings load categories and sources from the app without external integra
   assert.match(p.element('#categoryList').innerHTML, /Local/);
   assert.equal(p.calls.at(-1).url, '/api/me/settings');
   assert.equal(p.element('#settingsStatus').textContent, '');
+});
+
+
+test('saved YouTube preference selects the original player', async () => {
+  const p=await page({user:{name:'Fixture'},player:'youtube',feed:async()=>({videos:[{video_id:'M7lc1UVf-VE',title:'Fixture'}],categories:[]})});
+  vm.runInContext("openVideo('M7lc1UVf-VE')",p.context);await flush();
+  assert.equal(p.element('#activePlayerLabel').textContent,'YouTube');
+  assert.equal(p.plyrOptions(),undefined);
+  p.state(1);p.advance(4000);p.element('#closePlayer').handlers.click();await flush();
+  const report=p.calls.filter(c=>c.url==='/api/me/watch-time').at(-1);
+  assert.equal(JSON.parse(report.options.body).seconds,4);
+});
+
+test('changing the saved preference applies to the next video', async()=>{
+  const p=await page({user:{name:'Fixture'},feed:async()=>({videos:[{video_id:'M7lc1UVf-VE',title:'Fixture'}],categories:[]})});
+  p.element('#playerPreference').value='youtube';
+  await p.element('#playerSettingsForm').handlers.submit({preventDefault(){}});
+  assert.equal(p.calls.at(-1).url,'/api/me/settings/player');
+  assert.match(p.element('#playerPreferenceStatus').textContent,/تم حفظ/);
+  vm.runInContext("openVideo('M7lc1UVf-VE')",p.context);await flush();
+  assert.equal(p.element('#activePlayerLabel').textContent,'YouTube');
+});
+
+test('failed preference save retains the prior choice',async()=>{
+  const p=await page({user:{name:'Fixture'},savePlayer:async()=>{throw Error('save offline')}});
+  p.element('#playerPreference').value='youtube';
+  await p.element('#playerSettingsForm').handlers.submit({preventDefault(){}});
+  assert.equal(p.element('#playerPreference').value,'plyr');
+  assert.equal(p.element('#savePlayerPreference').disabled,false);
+  assert.equal(p.element('#playerPreferenceStatus').textContent,'save offline');
+});
+
+test('Plyr setup failure falls back to YouTube and closing during setup stays closed',async()=>{
+  const fixture={user:{name:'Fixture'},feed:async()=>({videos:[{video_id:'M7lc1UVf-VE',title:'Fixture'}],categories:[]})};
+  const p=await page({...fixture,plyrFails:true});
+  vm.runInContext("openVideo('M7lc1UVf-VE')",p.context);await flush();
+  assert.equal(p.element('#activePlayerLabel').textContent,'YouTube');
+  assert.match(p.element('#playerWatchStatus').textContent,/تعذر تحميل Plyr/);
+  const closed=await page(fixture);
+  vm.runInContext("openVideo('M7lc1UVf-VE');closeVideoPlayer()",closed.context);await flush();
+  assert.equal(closed.element('#playerFrame').innerHTML,'');
+  assert.equal(closed.element('#videoPlayer').open,false);
+  assert.equal(closed.plyrOptions(),undefined);
 });

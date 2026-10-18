@@ -29,3 +29,10 @@ The checker used installed local dependencies; it does not establish exact produ
 - Historical-schema fixture verifies retained users, sessions, subscriptions, playlist membership, video metadata, watched flags and watch time; integrity/foreign-key checks pass and rerunning the migration is safe.
 - A consistent snapshot of the production database was migrated only in a temporary file on the production machine. Fingerprints of every app data table, excluding removed remote IDs, were identical before/after. No production user data was downloaded.
 - Chromium checks cover desktop/mobile statistics, playback and the three-tab local settings panel. Third-party video availability remains outside synthetic browser tests.
+
+
+## 2026-10-18 player selection
+
+- 22 API/database regressions, 12 Node behavioral checks, and the isolated baseline checker pass.
+- Eight Chromium cases cover desktop/mobile statistics, Plyr controls, original YouTube mode, and saving the new player preference. Browser tests execute the actual vendored Plyr JS/CSS against a fake YouTube SDK, including close/reopen cleanup; third-party video availability is not certified by these fixtures.
+- The schema change adds only a per-user preference table; existing users default to Plyr and all library/history tables retain their structure.

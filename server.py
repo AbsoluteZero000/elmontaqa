@@ -15,6 +15,7 @@ SCHEMA = '''
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at INTEGER NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id));
 CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY, user_id INTEGER, message TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id));
+CREATE TABLE IF NOT EXISTS user_preferences (user_id INTEGER PRIMARY KEY, player TEXT NOT NULL DEFAULT 'plyr' CHECK(player IN ('plyr','youtube')), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS user_categories (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(user_id,name), FOREIGN KEY(user_id) REFERENCES users(id));
 CREATE TABLE IF NOT EXISTS watch_sessions (user_id INTEGER NOT NULL, session_id TEXT NOT NULL, video_id TEXT NOT NULL, category_id INTEGER, seconds INTEGER NOT NULL DEFAULT 0, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(user_id,session_id), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(category_id) REFERENCES user_categories(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS user_channels (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, youtube_channel_id TEXT NOT NULL, title TEXT NOT NULL, category_id INTEGER NOT NULL, created_at INTEGER NOT NULL, last_video_id TEXT NOT NULL DEFAULT '', last_video_published_at TEXT NOT NULL DEFAULT '', UNIQUE(user_id,youtube_channel_id), FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(category_id) REFERENCES user_categories(id));
@@ -68,6 +69,14 @@ def initialize_database(con):
     con.execute('CREATE INDEX IF NOT EXISTS user_videos_feed ON user_videos(user_id,published_at DESC)')
     con.execute('CREATE INDEX IF NOT EXISTS watch_sessions_category ON watch_sessions(user_id,category_id)')
     con.commit()
+
+def player_preference(user_id,con=None):
+    own=con is None;con=con or db()
+    try:
+        row=con.execute('SELECT player FROM user_preferences WHERE user_id=?',(user_id,)).fetchone()
+        return row['player'] if row else 'plyr'
+    finally:
+        if own:con.close()
 
 def token_sig(raw): return hmac.new(APP_SECRET.encode(),raw.encode(),hashlib.sha256).hexdigest()
 def hash_password(password,salt=None):
@@ -239,13 +248,24 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed=urlparse(self.path); path=parsed.path
         if path=='/health':return self.send_json(200,{'ok':True})
+        if path.startswith('/static/vendor/plyr/3.8.3/'):
+            filename=path.rsplit('/',1)[-1]
+            allowed={'plyr.js':'text/javascript; charset=utf-8','plyr.css':'text/css; charset=utf-8','plyr.svg':'image/svg+xml','LICENSE':'text/plain; charset=utf-8'}
+            if path!='/static/vendor/plyr/3.8.3/'+filename or filename not in allowed:return self.send_error(404)
+            try:
+                with open('static/vendor/plyr/3.8.3/'+filename,'rb') as asset:body=asset.read()
+                self.send_response(200);self.send_header('Content-Type',allowed[filename]);self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','public, max-age=31536000, immutable');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(body)
+            except OSError:self.send_error(404)
+            return
         if path=='/favicon.png':
             try:
                 with open('favicon.png','rb') as f:body=f.read()
                 self.send_response(200);self.send_header('Content-Type','image/png');self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','public, max-age=86400');self.end_headers();self.wfile.write(body)
             except OSError:self.send_error(404)
             return
-        if path=='/api/me':return self.send_json(200,{'user':self.session()})
+        if path=='/api/me':
+            user=self.session()
+            return self.send_json(200,{'user':user,'player':player_preference(user['id']) if user else 'plyr'})
         if path=='/api/feed':
             user=self.session()
             if not user:return self.send_json(401,{'error':'سجّل الدخول لعرض مكتبتك'})
@@ -271,11 +291,12 @@ class Handler(BaseHTTPRequestHandler):
             if not user:return self.send_json(401,{'error':'سجّل الدخول أولًا'})
             con=db()
             try:
+                preferred_player=player_preference(user['id'],con)
                 categories=[dict(row) for row in con.execute('SELECT c.id,c.name,(SELECT COUNT(*) FROM user_channels ch WHERE ch.user_id=c.user_id AND ch.category_id=c.id) AS channel_count,(SELECT COUNT(*) FROM user_playlists pl WHERE pl.user_id=c.user_id AND pl.category_id=c.id) AS playlist_count,(SELECT COUNT(*) FROM user_videos v WHERE v.user_id=c.user_id AND v.category_id=c.id) AS video_count FROM user_categories c WHERE c.user_id=? ORDER BY c.id',(user['id'],))]
                 channels=[dict(row) for row in con.execute('SELECT ch.id,ch.youtube_channel_id,ch.title,ch.category_id,c.name AS category FROM user_channels ch JOIN user_categories c ON c.id=ch.category_id WHERE ch.user_id=? ORDER BY ch.id',(user['id'],))]
                 playlists=[dict(row) for row in con.execute('SELECT pl.id,pl.youtube_playlist_id,pl.title,pl.category_id,c.name AS category FROM user_playlists pl JOIN user_categories c ON c.id=pl.category_id WHERE pl.user_id=? ORDER BY pl.id',(user['id'],))]
             finally:con.close()
-            return self.send_json(200,{'categories':categories,'channels':channels,'playlists':playlists})
+            return self.send_json(200,{'player':preferred_player,'categories':categories,'channels':channels,'playlists':playlists})
         if path=='/api/admin/feedback':
             if not self.need_admin():return
             con=db(); rows=con.execute('SELECT feedback.message,feedback.created_at,users.name,users.email FROM feedback LEFT JOIN users ON users.id=feedback.user_id ORDER BY feedback.created_at DESC LIMIT 500').fetchall(); con.close(); return self.send_json(200,{'feedback':[dict(r) for r in rows]})
@@ -289,6 +310,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path=urlparse(self.path).path; data=self.read_json()
         if data is None:return self.send_json(400,{'error':'بيانات غير صالحة'})
+        if path=='/api/me/settings/player':
+            user=self.session()
+            if not user:return self.send_json(401,{'error':'سجّل الدخول أولًا'})
+            player=data.get('player')
+            if not isinstance(player,str) or player not in ('plyr','youtube'):return self.send_json(400,{'error':'اختر Plyr أو YouTube'})
+            con=db()
+            try:
+                con.execute('INSERT INTO user_preferences(user_id,player) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET player=excluded.player',(user['id'],player));con.commit()
+            finally:con.close()
+            return self.send_json(200,{'ok':True,'player':player})
         if path=='/api/register':
             name=str(data.get('name','')).strip()[:80]; email=str(data.get('email','')).strip().lower()[:254]; password=str(data.get('password',''))
             if not name or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email) or len(password)<10:return self.send_json(400,{'error':'أدخل اسمًا وبريدًا صحيحًا وكلمة مرور من 10 أحرف على الأقل'})
@@ -296,12 +327,12 @@ class Handler(BaseHTTPRequestHandler):
             try: cur=con.execute('INSERT INTO users(email,name,password_hash,created_at) VALUES(?,?,?,?)',(email,name,hash_password(password),int(time.time())));con.commit();user_id=cur.lastrowid
             except sqlite3.IntegrityError:con.close();return self.send_json(409,{'error':'هذا البريد مسجل بالفعل'})
             raw=secrets.token_urlsafe(32);con.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(hashlib.sha256(raw.encode()).hexdigest(),user_id,int(time.time())+30*86400));con.commit();con.close()
-            return self.send_json(201,{'user':{'name':name,'email':email}},{'Set-Cookie':f'session={raw}.{token_sig(raw)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000'})
+            return self.send_json(201,{'user':{'name':name,'email':email},'player':'plyr'},{'Set-Cookie':f'session={raw}.{token_sig(raw)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000'})
         if path=='/api/login':
             email=str(data.get('email','')).strip().lower();password=str(data.get('password',''));con=db();user=con.execute('SELECT id,email,name,password_hash FROM users WHERE email=?',(email,)).fetchone()
             if not user or not verify_password(password,user['password_hash']):con.close();return self.send_json(401,{'error':'البريد أو كلمة المرور غير صحيحة'})
             raw=secrets.token_urlsafe(32);con.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(hashlib.sha256(raw.encode()).hexdigest(),user['id'],int(time.time())+30*86400));con.commit();con.close()
-            return self.send_json(200,{'user':{'name':user['name'],'email':user['email']}},{'Set-Cookie':f'session={raw}.{token_sig(raw)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000'})
+            return self.send_json(200,{'user':{'name':user['name'],'email':user['email']},'player':player_preference(user['id'])},{'Set-Cookie':f'session={raw}.{token_sig(raw)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000'})
         if path=='/api/logout':
             cookie=SimpleCookie(self.headers.get('Cookie',''));m=cookie.get('session')
             if m:

@@ -54,7 +54,7 @@ def main():
                 else:
                     raise RuntimeError("Server startup timed out")
                 assert request("/")[0] == 200
-                assert request("/api/me")[:2] == (200, {"user": None})
+                assert request("/api/me")[:2] == (200, {"user": None,"player":"plyr"})
                 assert request("/api/feed")[0] == 401
                 assert request("/api/admin/feedback")[0] == 403
                 assert request("/api/login", {"email": "nobody@example.test", "password": "invalid"})[0] == 401

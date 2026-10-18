@@ -40,9 +40,11 @@ The checker uses a temporary database, generated secret, synthetic accounts, and
 
 ## Watching and statistics
 
-Click a video thumbnail or «تشغيل الفيديو» to open the in-page player. The «الإحصائيات» page at `/statistics` shows your library completion, recorded watch time, and category summaries linked back to the library.
+Click a video thumbnail or «تشغيل الفيديو» to open the in-page player. Plyr is the default. Choose Plyr or the original YouTube player in **الإعدادات → المشغّل**, then save; the preference is stored per account and applies to the next video. Both modes use YouTube video delivery, so switching controls does not guarantee removal of recommendations. The «الإحصائيات» page at `/statistics` shows your library completion, recorded watch time, and category summaries linked back to the library.
 
 Watch time is recorded from player playback events, saved every 15 seconds and on pause/close, and retained when a video is removed. Paused/buffering time is excluded. Past YouTube viewing cannot be recovered. Abrupt browser shutdown or connectivity failures can lose the final unsaved interval. Some owners restrict embedding; the player includes a YouTube fallback link.
+
+Plyr 3.8.3 assets are pinned and served locally from `static/vendor/plyr/3.8.3/`; its MIT license is included there. The player assets and YouTube API load only when a video is opened. If Plyr cannot initialize, that viewing falls back to the original player.
 
 ## Deployment
 

@@ -314,6 +314,39 @@ class LegacyMigrationTests(unittest.TestCase):
             finally:con.close()
 
 
+class PlayerPreferenceTests(APITest):
+    def test_default_save_reload_and_account_isolation(self):
+        self.assertEqual(self.request('/api/me')[1]['player'],'plyr')
+        self.assertEqual(self.request('/api/me/settings')[1]['player'],'plyr')
+        self.assertEqual(self.request('/api/me/settings/player',{'player':'youtube','user_id':2})[0],200)
+        self.assertEqual(self.request('/api/me')[1]['player'],'youtube')
+        self.assertEqual(self.request('/api/me/settings')[1]['player'],'youtube')
+        self.assertEqual(app.player_preference(2),'plyr')
+        con=app.db();app.initialize_database(con);con.close()
+        self.assertEqual(self.request('/api/me/settings')[1]['player'],'youtube')
+        self.assertEqual(self.request('/api/me/settings/player',{'player':'plyr'})[0],200)
+        self.assertEqual(self.request('/api/me')[1]['player'],'plyr')
+
+    def test_invalid_preferences_and_anonymous_updates_are_rejected(self):
+        for value in (None,True,[],{},'other','YouTube',''):
+            self.assertEqual(self.request('/api/me/settings/player',{'player':value})[0],400)
+        self.assertEqual(self.request('/api/me/settings')[1]['player'],'plyr')
+        self.cookie=''
+        self.assertEqual(self.request('/api/me/settings/player',{'player':'youtube'})[0],401)
+
+    def test_versioned_assets_are_served_with_fixed_paths_and_types(self):
+        for filename,kind in (('plyr.js','text/javascript'),('plyr.css','text/css'),('plyr.svg','image/svg+xml')):
+            connection=http.client.HTTPConnection(*self.server.server_address,timeout=5)
+            try:
+                connection.request('GET','/static/vendor/plyr/3.8.3/'+filename)
+                response=connection.getresponse();body=response.read()
+                self.assertEqual(response.status,200)
+                self.assertTrue(response.getheader('Content-Type').startswith(kind))
+                self.assertIn('immutable',response.getheader('Cache-Control'))
+                self.assertGreater(len(body),1000)
+            finally:connection.close()
+
+
 class StatisticsTests(APITest):
     def test_watch_time_is_private_monotonic_and_persists_after_video_removal(self):
         self.add_video('own-video')
