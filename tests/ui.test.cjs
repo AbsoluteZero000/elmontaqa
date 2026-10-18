@@ -25,7 +25,8 @@ async function page({user = null, sync, feed, statistics, settings, player = "pl
     return elements.get(selector);
   }
   const calls = [];
-  let clock = 0, playerOptions, plyrOptions, destroyed = 0;
+  let clock = 0, playerOptions, plyrOptions, plyrInstance, youtubeInstance, destroyed = 0;
+  const seeks = []; let paused = 0;
   const plyrHandlers = {};
   const context = vm.createContext({
     document: {querySelector: element, querySelectorAll: () => [], createElement: () => ({remove(){}}), head: {appendChild: node => queueMicrotask(() => node.onload())}},
@@ -34,11 +35,11 @@ async function page({user = null, sync, feed, statistics, settings, player = "pl
     performance: {now: () => clock}, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
     window: {confirm: () => true, addEventListener() {}, Plyr: function(id, options) {
       if(plyrFails)throw Error('fixture asset failure');
-      plyrOptions = options; this.playing = false;
+      plyrOptions = options; plyrInstance=this; this.playing = false; this.currentTime=0;
       this.destroy = () => { destroyed++; };
       this.on = (names, handler) => names.split(' ').forEach(name => { plyrHandlers[name] = handler; });
     }, YT: {Player: function(id, options) {
-      playerOptions = options; this.destroy = () => {}; this.getPlayerState = () => -1;
+      playerOptions = options; youtubeInstance=this; this.destroy = () => {}; this.getPlayerState = () => -1; this.seekTo = seconds => seeks.push(seconds); this.pauseVideo = () => { paused++; };
     }}},
     fetch: async (url, options) => {
       calls.push({url, options});
@@ -56,7 +57,7 @@ async function page({user = null, sync, feed, statistics, settings, player = "pl
   });
   vm.runInContext(script, context);
   await flush();
-  return {element, calls, context, advance: value => { clock += value; }, state: data => playerOptions ? playerOptions.events.onStateChange({data}) : plyrHandlers[({1:'playing',2:'pause',3:'waiting',0:'ended'})[data]](), plyrOptions: () => plyrOptions, destroyed: () => destroyed};
+  return {element, calls, context, advance: value => { clock += value; }, state: data => playerOptions ? playerOptions.events.onStateChange({data}) : plyrHandlers[({1:'playing',2:'pause',3:'waiting',0:'ended'})[data]](), plyrOptions: () => plyrOptions, destroyed: () => destroyed, plyr: () => plyrInstance, ready: () => playerOptions.events.onReady({target:youtubeInstance}), seeks, paused: () => paused};
 }
 
 test('anonymous startup does not request a private feed or show a failure', async () => {
@@ -126,6 +127,8 @@ test('in-page playback counts only playing time and stops on close', async () =>
   assert.equal(p.element('#videoPlayer').open, true);
   assert.equal(p.element('#activePlayerLabel').textContent, 'Plyr');
   assert.equal(p.plyrOptions().autoplay, true);
+  assert.equal(p.plyrOptions().captions.active, false);
+  assert.equal(p.plyrOptions().youtube.cc_load_policy, 0);
   assert.match(p.element('#playerFrame').innerHTML, /youtube-nocookie.com\/embed\/M7lc1UVf-VE/);
   assert.match(p.element('#playerFrame').innerHTML, /Title &lt;safe&gt;/);
   p.state(1); p.advance(12500); p.state(2);
@@ -218,4 +221,45 @@ test('Plyr setup failure falls back to YouTube and closing during setup stays cl
   assert.equal(closed.element('#playerFrame').innerHTML,'');
   assert.equal(closed.element('#videoPlayer').open,false);
   assert.equal(closed.plyrOptions(),undefined);
+});
+
+
+test('quality and captions switch preserves position and watch time without changing preference',async()=>{
+  const p=await page({user:{name:'Fixture'},feed:async()=>({videos:[{video_id:'M7lc1UVf-VE',title:'Fixture'}],categories:[]})});
+  vm.runInContext("openVideo('M7lc1UVf-VE')",p.context);await flush();
+  assert.equal(p.element('#fullPlayerControls').hidden,false);
+  assert.deepEqual(Array.from(p.plyrOptions().settings),['speed']);
+  p.plyr().currentTime=137.75;p.plyr().playing=true;p.state(1);p.advance(5000);
+  await p.element('#fullPlayerControls').handlers.click();p.ready();
+  assert.equal(p.element('#activePlayerLabel').textContent,'YouTube');
+  assert.equal(p.element('#fullPlayerControls').hidden,true);
+  assert.match(p.element('#playerFrame').innerHTML,/autoplay=1/);
+  assert.match(p.element('#playerFrame').innerHTML,/start=137/);
+  assert.match(p.element('#playerFrame').innerHTML,/cc_load_policy=0/);
+  assert.deepEqual(p.seeks,[137.75]);assert.equal(p.paused(),0);
+  p.advance(10000);p.state(1);p.advance(4000);p.element('#closePlayer').handlers.click();await flush();
+  const reports=p.calls.filter(c=>c.url==='/api/me/watch-time').map(c=>JSON.parse(c.options.body));
+  assert.equal(reports.at(-1).seconds,9);
+  assert.equal(new Set(reports.map(r=>r.session_id)).size,1);
+  assert.equal(p.calls.filter(c=>c.url==='/api/me/settings/player').length,0);
+  vm.runInContext("openVideo('M7lc1UVf-VE')",p.context);await flush();
+  assert.equal(p.element('#activePlayerLabel').textContent,'Plyr');
+});
+
+test('quality and captions switch preserves a paused video',async()=>{
+  const p=await page({user:{name:'Fixture'},feed:async()=>({videos:[{video_id:'M7lc1UVf-VE',title:'Fixture'}],categories:[]})});
+  vm.runInContext("openVideo('M7lc1UVf-VE')",p.context);await flush();
+  p.plyr().currentTime=58.2;p.plyr().playing=false;
+  await p.element('#fullPlayerControls').handlers.click();p.ready();
+  assert.match(p.element('#playerFrame').innerHTML,/autoplay=0/);
+  assert.deepEqual(p.seeks,[58.2]);assert.equal(p.paused(),1);
+});
+
+test('switching while Plyr loads cannot replace the native player later',async()=>{
+  const p=await page({user:{name:'Fixture'},feed:async()=>({videos:[{video_id:'M7lc1UVf-VE',title:'Fixture'}],categories:[]})});
+  vm.runInContext("openVideo('M7lc1UVf-VE')",p.context);
+  await p.element('#fullPlayerControls').handlers.click();await flush();
+  assert.equal(p.element('#activePlayerLabel').textContent,'YouTube');
+  assert.equal(p.plyrOptions(),undefined);
+  assert.equal(p.element('#videoPlayer').open,true);
 });

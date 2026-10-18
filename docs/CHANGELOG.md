@@ -75,3 +75,13 @@ The hashes in AUDIT.md describe the recovered initial commit, not subsequently e
 - Adapt playing/pause/buffering/seek/end events to the existing watch-time recorder. Close or switch destroys the instance and saves accumulated time; stale setup and native-dialog close events cannot affect a newly opened player.
 - Add an Arabic player preference form and compact mobile controls. Both options use YouTube underneath; recommendations are not guaranteed to disappear.
 - Validate preference persistence, account isolation, invalid input, lazy asset serving, both playback event adapters, save failure/fallback behavior, and desktop/mobile rendering using the actual bundled Plyr library with a synthetic YouTube SDK.
+
+
+## 2026-10-18 — access YouTube quality and caption controls
+
+- Plyr's YouTube caption menu is unsupported, and YouTube's API does not support manual quality selection. Remove the unavailable captions entry from Plyr's settings rather than presenting a nonfunctional choice.
+- Explicitly keep caption activation disabled in Plyr and avoid forcing YouTube captions (`cc_load_policy=0`); YouTube may still honor its own viewer caption preference.
+- Add «الجودة والترجمة» to the player dialog. It switches only the current viewing to the native YouTube controls, retaining video position, paused/playing state, watch-session identity and accumulated watch time. Loading the replacement player is excluded from watch time; the saved default remains Plyr.
+- Guard pending initialization so a delayed Plyr load cannot replace the user's full-controls selection. Both modes show clear guidance; quality/caption options depend on availability in the embedded video.
+- Validation: 15 Node checks and ten Chromium desktop/mobile cases, including paused/playing handoff, exact seek restoration, watch-time continuity, unchanged preference, and switching during pending setup. YouTube SDK behavior is synthetic in browser tests.
+- References: https://developers.google.com/youtube/iframe_api_revision_history#October_24_2019 and https://github.com/sampotts/plyr/blob/v3.8.3/src/js/captions.js.

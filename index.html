@@ -17,6 +17,7 @@
     @media(max-width:540px){.settings-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.settings-tab{min-width:0;padding:10px 6px;font-size:13px}}
     .player-badge{display:inline-block;padding:4px 10px;margin-bottom:12px;border-radius:999px;background:#e9eee3;color:#315942;font-size:12px;font-weight:700}.player-frame{--plyr-color-main:#315942}.player-frame>.plyr{height:100%;min-height:200px;width:100%}.player-frame .plyr__controls button{font-family:inherit}.player-frame .plyr__menu__container{color:#202920}.player-frame .plyr__control{border-radius:6px}
     @media(max-width:540px){.player-frame .plyr__volume{min-width:0;max-width:32px}.player-frame .plyr__volume input{display:none}.player-frame .plyr__time--duration{display:none}.player-frame .plyr__controls{padding:8px;gap:2px}.player-frame .plyr__controls__item{margin-left:0}}
+    .player-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.player-toolbar .player-badge{margin:0}.full-player-controls{padding:7px 12px;font-size:13px}.player-controls-help{margin:10px 0 0}
   </style>
 </head>
 <body>
@@ -42,7 +43,7 @@
   </main>
   <div class="modal" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle"><div class="dialog"><button class="close" id="closeAuth" aria-label="إغلاق">×</button><h2 id="authTitle">أهلًا بيك في المُنْتَقَى</h2><p id="authHint">سجّل دخولك أو أنشئ حسابًا جديدًا.</p><form class="auth-form" id="authForm"><input id="displayName" placeholder="اسمك" autocomplete="name" required><input id="email" type="email" placeholder="البريد الإلكتروني" autocomplete="email" required><input id="password" type="password" placeholder="كلمة المرور (10 أحرف على الأقل)" autocomplete="current-password" minlength="10" required><button id="authSubmit" type="submit">إنشاء حساب</button><div class="form-status" id="authStatus" role="status" aria-live="polite"></div></form><p class="demo-caption">حسابك وكلمة مرورك يُعالجان على خادم آمن. لا نطلب بيانات دفع.</p></div></div>
   <div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"><div class="dialog admin-dialog"><button class="close" id="closeSettings" aria-label="إغلاق">×</button><h2 id="settingsTitle">إعدادات حسابك</h2><p>نظّم تصنيفاتك والقنوات وقوائم التشغيل التي تتابعها. مكتبتك ووقت المشاهدة محفوظان في المُنْتَقَى.</p><nav class="settings-tabs" aria-label="أقسام الإعدادات"><button class="settings-tab active" data-pane="channelsPane">القنوات</button><button class="settings-tab" data-pane="playlistsPane">قوائم التشغيل</button><button class="settings-tab" data-pane="categoriesPane">التصنيفات</button><button class="settings-tab" data-pane="playbackPane">المشغّل</button></nav><div id="settingsStatus" class="form-status" role="status" aria-live="polite"></div><div id="settingsPanel"><section class="admin-section settings-pane" id="playbackPane"><h3>مشغّل الفيديو</h3><p>اختر واجهة التشغيل المفضّلة لك. كلا الخيارين يشغّل فيديوهات YouTube، ويُحفظ وقت المشاهدة مع أي منهما.</p><form class="auth-form" id="playerSettingsForm"><label for="playerPreference">المشغّل الافتراضي</label><select id="playerPreference"><option value="plyr" selected>Plyr — الافتراضي</option><option value="youtube">YouTube — المشغّل الأصلي</option></select><button type="submit" id="savePlayerPreference">حفظ المشغّل</button><div class="form-status" id="playerPreferenceStatus" role="status" aria-live="polite"></div></form><small>يُحفظ اختيارك في حسابك ويُطبَّق على الفيديو التالي الذي تشغّله.</small></section><section class="admin-section settings-pane active" id="channelsPane"><h3>إضافة قناة YouTube</h3><form class="auth-form" id="channelForm"><input id="channelUrl" placeholder="رابط القناة، مثل youtube.com/@handle" required><select id="channelCategory" required><option value="">اختر التصنيف</option></select><button type="submit">إضافة القناة</button></form><div class="form-status" id="channelStatus"></div><h3 style="margin-top:22px">القنوات المضافة وتصنيفاتها</h3><div id="channelList"></div><small>تغيير تصنيف القناة يطبق على الفيديوهات التي تُجلب لاحقًا. إزالة القناة توقف متابعتها وتحذف فيديوهاتها من المكتبة؛ تبقى الفيديوهات المرتبطة بمصدر آخر.</small></section><section class="admin-section settings-pane" id="playlistsPane"><h3>قوائم تشغيل YouTube</h3><p>أضف رابط قائمة عامة واختر تصنيفًا من مكتبتك.</p><form class="auth-form" id="playlistForm"><input id="playlistUrl" placeholder="رابط قائمة التشغيل العامة على YouTube" required><select id="playlistCategory" required><option value="">اختر التصنيف</option></select><button type="submit">إضافة قائمة التشغيل</button></form><div class="form-status" id="playlistStatus"></div><h3 style="margin-top:22px">قوائم التشغيل المضافة وتصنيفاتها</h3><div id="playlistList"></div><small>تُسجّل القائمة لحظة إضافتها؛ الفيديوهات الموجودة فيها قبل ذلك لا تُجلب. زر الجلب يستورد ما أُضيف بعدها. تغيير التصنيف يطبق على الفيديوهات الجديدة.</small><button class="refresh" id="syncNow" style="margin-top:18px">جلب الفيديوهات الجديدة الآن</button><div class="form-status" id="syncStatus"></div></section><section class="admin-section settings-pane" id="categoriesPane"><h3>إدارة التصنيفات الموحدة</h3><p>أضف التصنيف أو غيّر اسمه أو أزله من هنا. يُحفظ التغيير في مكتبتك فورًا، وتستخدمه القنوات وقوائم التشغيل.</p><div class="form-status" id="categoryStatus" role="status" aria-live="polite"></div><form class="auth-form inline-form" id="categoryForm"><input id="categoryName" placeholder="اسم تصنيف جديد" required><button type="submit">إنشاء التصنيف</button></form><div id="categoryList"></div></section></div></div></div>
-<dialog class="player-dialog" id="videoPlayer" aria-labelledby="playerTitle"><button type="button" class="close" id="closePlayer" aria-label="إغلاق الفيديو">×</button><h2 id="playerTitle"></h2><span class="player-badge" id="activePlayerLabel"></span><div class="player-frame" id="playerFrame" dir="ltr"></div><div id="playerWatchStatus" class="quiet" role="status" aria-live="polite"></div><p class="player-help">لو صاحب الفيديو منع تشغيله خارج YouTube، يمكنك <a id="playerYoutube" target="_blank" rel="noopener noreferrer">فتحه على YouTube</a>.</p></dialog>
+<dialog class="player-dialog" id="videoPlayer" aria-labelledby="playerTitle"><button type="button" class="close" id="closePlayer" aria-label="إغلاق الفيديو">×</button><h2 id="playerTitle"></h2><div class="player-toolbar"><span class="player-badge" id="activePlayerLabel"></span><button type="button" class="account full-player-controls" id="fullPlayerControls">⚙ الجودة والترجمة</button></div><div class="player-frame" id="playerFrame" dir="ltr"></div><p class="quiet player-controls-help" id="playerControlsHelp"></p><div id="playerWatchStatus" class="quiet" role="status" aria-live="polite"></div><p class="player-help">لو صاحب الفيديو منع تشغيله خارج YouTube، يمكنك <a id="playerYoutube" target="_blank" rel="noopener noreferrer">فتحه على YouTube</a>.</p></dialog>
 <script>
 let selected='الكل',categories=[],videos=[];
 const tabs=document.querySelector('#tabs'),grid=document.querySelector('#grid'),empty=document.querySelector('#empty');
@@ -74,36 +75,38 @@ function loadPlyrAssets(){
  }
  return plyrAssets;
 }
-function renderYouTubeFrame(video,autoplay=true){
- return `<iframe id="embeddedVideo" src="https://www.youtube-nocookie.com/embed/${video.video_id}?autoplay=${autoplay?1:0}&rel=0&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}" title="${esc(video.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+function renderYouTubeFrame(video,autoplay=true,startAt=0){
+ return `<iframe id="embeddedVideo" src="https://www.youtube-nocookie.com/embed/${video.video_id}?autoplay=${autoplay?1:0}&rel=0&playsinline=1&cc_load_policy=0&enablejsapi=1&start=${Math.max(0,Math.floor(startAt))}&origin=${encodeURIComponent(location.origin)}" title="${esc(video.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
 }
-function useYouTubePlayer(video,session){
- document.querySelector('#playerFrame').innerHTML=renderYouTubeFrame(video);
+function useYouTubePlayer(video,session,startAt=0,autoplay=true){
+ session.mode='youtube';document.querySelector('#fullPlayerControls').hidden=true;document.querySelector('#playerControlsHelp').textContent='لتغيير الجودة استخدم ⚙، وللترجمة استخدم CC داخل الفيديو، عند توفرها.';
+ document.querySelector('#playerFrame').innerHTML=renderYouTubeFrame(video,autoplay,startAt);
  document.querySelector('#activePlayerLabel').textContent='YouTube';
  return loadYouTubeAPI().then(()=>{
-  if(watchSession!==session || !videoPlayer.open)return;
-  embeddedPlayer=new window.YT.Player('embeddedVideo',{events:{onReady:event=>{if(watchSession===session)playbackState({data:event.target.getPlayerState()})},onStateChange:event=>{if(watchSession===session)playbackState(event)},onError:()=>{if(watchSession===session){playbackState({data:0});document.querySelector('#playerWatchStatus').textContent='تعذر تشغيل الفيديو هنا. جرّب رابط YouTube أدناه.'}}}});
+  if(watchSession!==session || !videoPlayer.open || session.mode!=='youtube')return;
+  embeddedPlayer=new window.YT.Player('embeddedVideo',{events:{onReady:event=>{if(watchSession===session && session.mode==='youtube'){if(startAt>0)event.target.seekTo(startAt,true);if(!autoplay)event.target.pauseVideo();playbackState({data:event.target.getPlayerState()})}},onStateChange:event=>{if(watchSession===session)playbackState(event)},onError:()=>{if(watchSession===session){playbackState({data:0});document.querySelector('#playerWatchStatus').textContent='تعذر تشغيل الفيديو هنا. جرّب رابط YouTube أدناه.'}}}});
  });
 }
 function usePlyrPlayer(video,session){
+ session.mode='plyr';document.querySelector('#fullPlayerControls').hidden=false;document.querySelector('#playerControlsHelp').textContent='للجودة والترجمة، افتح أدوات YouTube الكاملة من الزر أعلاه دون مغادرة الموقع.';
  document.querySelector('#playerFrame').innerHTML=`<div class="plyr__video-embed" id="plyrVideo">${renderYouTubeFrame(video,false)}</div>`;
  document.querySelector('#activePlayerLabel').textContent='Plyr';
  return Promise.all([loadPlyrAssets(),loadYouTubeAPI()]).then(()=>{
-  if(watchSession!==session || !videoPlayer.open)return;
+  if(watchSession!==session || !videoPlayer.open || session.mode!=='plyr')return;
   const player=new window.Plyr('#plyrVideo',{
    title:video.title,autoplay:true,playsinline:true,ratio:'16:9',storage:{enabled:false},
-   iconUrl:plyrBase+'plyr.svg',youtube:{noCookie:true,rel:0},
+   iconUrl:plyrBase+'plyr.svg',captions:{active:false,language:'auto',update:false},youtube:{noCookie:true,rel:0,cc_load_policy:0},
    controls:['play-large','play','progress','current-time','duration','mute','volume','settings','fullscreen'],
-   settings:['captions','speed'],keyboard:{focused:true,global:false},
+   settings:['speed'],keyboard:{focused:true,global:false},
    i18n:{play:'تشغيل',pause:'إيقاف مؤقت',mute:'كتم الصوت',unmute:'تشغيل الصوت',settings:'الإعدادات',speed:'السرعة',normal:'عادية',captions:'الترجمة',enableCaptions:'تشغيل الترجمة',disableCaptions:'إيقاف الترجمة',enterFullscreen:'ملء الشاشة',exitFullscreen:'إنهاء ملء الشاشة',volume:'الصوت',seek:'تقديم أو إرجاع',currentTime:'الوقت الحالي',duration:'المدة'}
   });
   embeddedPlayer=player;
   const state=playing=>{if(watchSession===session && embeddedPlayer===player)playbackState({data:playing?1:0})};
   player.on('ready',()=>state(player.playing));player.on('playing',()=>state(true));
   player.on('pause waiting seeking ended',()=>state(false));
-  player.on('error',()=>{state(false);if(watchSession===session)document.querySelector('#playerWatchStatus').textContent='تعذر تشغيل الفيديو هنا. جرّب رابط YouTube أدناه.'});
+  player.on('error',()=>{state(false);if(watchSession===session && embeddedPlayer===player)document.querySelector('#playerWatchStatus').textContent='تعذر تشغيل الفيديو هنا. جرّب رابط YouTube أدناه.'});
  }).catch(error=>{
-  if(watchSession!==session || !videoPlayer.open)return;
+  if(watchSession!==session || !videoPlayer.open || session.mode!=='plyr')return;
   if(embeddedPlayer){embeddedPlayer.destroy();embeddedPlayer=null}
   document.querySelector('#playerWatchStatus').textContent='تعذر تحميل Plyr. تم استخدام مشغّل YouTube لهذه المشاهدة.';
   return useYouTubePlayer(video,session);
@@ -147,6 +150,20 @@ function openVideo(videoId){
  const setup=playerPreference==='youtube'?useYouTubePlayer(video,session):usePlyrPlayer(video,session);
  setup.catch(error=>{if(watchSession===session)document.querySelector('#playerWatchStatus').textContent='تعذر تهيئة المشغّل. جرّب إعادة فتح الفيديو أو رابط YouTube أدناه.'});
 }
+document.querySelector('#fullPlayerControls').addEventListener('click',async()=>{
+ const session=watchSession;
+ if(!session || session.mode!=='plyr')return;
+ const video=videos.find(item=>item.video_id===session.videoId);if(!video)return;
+ const player=embeddedPlayer;
+ const rawTime=Number(player?.currentTime||0),startAt=Number.isFinite(rawTime)?Math.max(0,rawTime):0;
+ const autoplay=player?Boolean(player.playing):true;
+ accrueWatchTime();session.playing=false;saveWatchTime();
+ // Invalidate pending Plyr setup and events before replacing the instance.
+ session.mode='youtube';embeddedPlayer=null;
+ if(player)player.destroy();
+ try{await useYouTubePlayer(video,session,startAt,autoplay)}
+ catch{if(watchSession===session)document.querySelector('#playerWatchStatus').textContent='تعذر تحميل أدوات YouTube. أعد فتح الفيديو وحاول مجددًا.'}
+});
 grid.addEventListener('click',event=>{const button=event.target.closest('[data-play]');if(button)openVideo(button.dataset.play)});
 function closeVideoPlayer(){stopVideoSession();videoPlayer.close()}
 document.querySelector('#closePlayer').addEventListener('click',closeVideoPlayer);

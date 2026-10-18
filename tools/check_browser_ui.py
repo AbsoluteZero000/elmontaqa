@@ -48,6 +48,10 @@ setTimeout(async()=>{
  try {
   const check=(value,message)=>{if(!value)throw Error(message)};
   check(!browserErrors.length,browserErrors.join('; '));
+  for(let i=0;i<60;i++){
+   const ready=location.pathname==='/statistics'?!document.querySelector('#statisticsContent').hidden:!!document.querySelector('[data-play]');
+   if(ready)break;await new Promise(r=>setTimeout(r,25));
+  }
   check(document.documentElement.scrollWidth<=innerWidth,'horizontal overflow');
   if(location.pathname==='/statistics'){
    check(!document.querySelector('#statisticsContent').hidden,'statistics hidden');
@@ -92,6 +96,18 @@ setTimeout(async()=>{
     embeddedPlayer.pause();embeddedPlayer.toggleControls(true);
    }
    check(document.querySelector('#playerFrame iframe'),'iframe missing after reopening');
+   if(new URLSearchParams(location.search).has('switch-test')){
+    embeddedPlayer.currentTime=74;embeddedPlayer.pause();
+    const oldSession=watchSession.id;
+    document.querySelector('#fullPlayerControls').click();
+    await new Promise(r=>setTimeout(r,100));
+    check(document.querySelector('#activePlayerLabel').textContent==='YouTube','full-controls switch failed');
+    check(document.querySelector('#fullPlayerControls').hidden,'switch button should hide in YouTube mode');
+    check(document.querySelector('#playerFrame iframe').src.includes('start=74'),'playback position was lost');
+    check(embeddedPlayer.getCurrentTime()===74,'native seek position was lost');
+    check(watchSession.id===oldSession,'watch session changed on switch');
+    check(playerPreference==='plyr','one-time switch changed saved preference');
+   }
   }
   check(!browserErrors.length,browserErrors.join('; '));
   document.body.dataset.browserCheck='passed';
@@ -154,6 +170,8 @@ def main():
                                           ('statistics-mobile', 390, 1200, '/statistics'),
                                           ('player-desktop', 1440, 1000, '/'),
                                           ('player-mobile', 390, 1000, '/'),
+                                          ('controls-desktop', 1440, 1000, '/?switch-test=1'),
+                                          ('controls-mobile', 390, 1000, '/?switch-test=1'),
                                           ('youtube-desktop', 1440, 1000, '/?youtube-test=1'),
                                           ('youtube-mobile', 390, 1000, '/?youtube-test=1'),
                                           ('settings-desktop', 1440, 1000, '/?settings-test=1'),
