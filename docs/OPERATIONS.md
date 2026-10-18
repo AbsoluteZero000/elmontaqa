@@ -58,3 +58,7 @@ Remove the `NOTION_OAUTH_CLIENT_ID` and `NOTION_OAUTH_CLIENT_SECRET` Fly secrets
 Recovered `/app` source and public icons from machine `84ed23dc5d0d78`, version 36, image `registry.fly.io/elmontaqa:deployment-01M57E03NPEHP06VE1RVEHMAB6`. The production changes add animated branding and GIF/ICO icon routes. The Dockerfile now includes both new assets. No database or secrets were copied.
 
 The observed image has no `/app/static` directory despite referencing the bundled Plyr assets. Keep the versioned assets and Docker `COPY static` from this repository for future builds. Live Fly configuration currently has `min_machines_running = 0` and no HTTP health check; the repository retains its intended warm-machine setting and `/health` check. This recovery only synchronizes source to GitHub; it does not deploy or modify live configuration.
+
+### Restore complete deployment — 2026-10-18
+
+Deployed repository commit `795e37d3903ae01d6124a69d81217200777f77ac` as image `registry.fly.io/elmontaqa:deployment-01M57G0WVPP9JHZRSPJE6FEV1V`. This restores the bundled Plyr JS/CSS/sprite (previous live requests returned 404), the minimum of one running machine, and the HTTP health check. The public homepage and all three player assets match repository bytes. The health check passes, and all ten Chromium UI fixtures pass. A fresh Brave 150.1.92.134 profile loaded the live homepage and signed-out state without JavaScript exceptions via DevTools; the reported failure in the user's existing Brave profile is not yet reproduced.
