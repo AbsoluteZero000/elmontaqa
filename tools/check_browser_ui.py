@@ -42,6 +42,12 @@ setTimeout(async()=>{
    check(document.querySelectorAll('.stats-category').length===4,'category cards missing');
    check(document.querySelector('#completionPercent').textContent==='٤٠٪','incorrect percentage');
    check(document.querySelector('#completionRing').getBoundingClientRect().width>50,'ring has no size');
+  } else if(new URLSearchParams(location.search).has('settings-test')) {
+   await loadUserSettings();document.querySelector('#settingsModal').classList.add('open');
+   check(document.querySelectorAll('.settings-tab').length===3,'unexpected settings tab count');
+   check(!/notion/i.test(document.querySelector('#settingsModal').textContent),'retired integration still visible');
+   check(document.querySelector('#channelsPane').classList.contains('active'),'channels should open first');
+   check(document.querySelector('#categoryList input').value.includes('القرآن'),'local categories missing');
   } else {
    const button=document.querySelector('[data-play]');button.focus();button.click();
    const dialog=document.querySelector('#videoPlayer');
@@ -75,6 +81,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
         elif path.startswith('/api/'):
             payload = {'/api/me': {'user': {'name': 'قارئ'}},
                        '/api/me/statistics': STATS,
+                       '/api/me/settings': {'categories': [dict(c, channel_count=c['channels'], playlist_count=c['playlists'], video_count=c['videos']) for c in STATS['categories']], 'channels': [], 'playlists': []},
                        '/api/feed': {'categories': [{'id': 1, 'name': 'القرآن وعلومه'}],
                                      'videos': [{'video_id': 'M7lc1UVf-VE', 'title': 'فيديو تجريبي للمشغّل',
                                                  'category': 'القرآن وعلومه', 'channel_title': 'قناة تجريبية',
@@ -112,7 +119,9 @@ def main():
         for name, width, height, path in [('statistics-desktop', 1440, 1200, '/statistics'),
                                           ('statistics-mobile', 390, 1200, '/statistics'),
                                           ('player-desktop', 1440, 1000, '/'),
-                                          ('player-mobile', 390, 1000, '/')]:
+                                          ('player-mobile', 390, 1000, '/'),
+                                          ('settings-desktop', 1440, 1000, '/?settings-test=1'),
+                                          ('settings-mobile', 390, 1000, '/?settings-test=1')]:
             with tempfile.TemporaryDirectory() as profile:
                 result = subprocess.run([
                     chromium, '--headless', '--no-sandbox', '--disable-gpu', '--no-proxy-server',

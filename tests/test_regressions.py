@@ -36,8 +36,7 @@ class APITest(unittest.TestCase):
         con = app.db()
         for uid in (1, 2):
             con.execute("INSERT INTO users VALUES(?,?,?,?,?)", (uid, f"user{uid}@example.test", "Fixture", "unused", 0))
-            con.execute("INSERT INTO user_categories VALUES(?,?,?,?,?,?)", (uid, uid, "Category", f"db{uid}", f"source{uid}", 0))
-            con.execute("INSERT INTO user_integrations(user_id,notion_token_enc,notion_page_id,updated_at) VALUES(?,?,?,0)", (uid, app.seal_text("fixture-token"), "fixture-root"))
+            con.execute("INSERT INTO user_categories VALUES(?,?,?,?)", (uid, uid, "Category", 0))
         raw = secrets.token_urlsafe(32)
         con.execute("INSERT INTO sessions VALUES(?,?,?)", (app.hashlib.sha256(raw.encode()).hexdigest(), 1, int(time.time()) + 3600))
         con.commit()
@@ -61,8 +60,8 @@ class APITest(unittest.TestCase):
 
     def add_video(self, video_id, uid=1, watched=1):
         con = app.db()
-        con.execute("INSERT INTO user_videos(user_id,video_id,title,description,channel_id,channel_title,category_id,published_at,video_url,notion_page_id,watched,created_at) VALUES(?,?,?,'','channel','Channel',?,'2020-01-01T00:00:00Z',?,?,?,0)",
-                    (uid, video_id, video_id, uid, f"https://www.youtube.com/watch?v={video_id}", f"page-{uid}-{video_id}", watched))
+        con.execute("INSERT INTO user_videos(user_id,video_id,title,description,channel_id,channel_title,category_id,published_at,video_url,watched,created_at) VALUES(?,?,?,'','channel','Channel',?,'2020-01-01T00:00:00Z',?,?,0)",
+                    (uid, video_id, video_id, uid, f"https://www.youtube.com/watch?v={video_id}", watched))
         con.execute("INSERT INTO user_video_sources VALUES(?,?,'channel','1',0)", (uid, video_id))
         con.commit()
         con.close()
@@ -82,15 +81,10 @@ class WatchedDeletionTests(APITest):
         self.add_video("newly-watched", watched=0)
         self.add_video("watched-0", uid=2)
 
-        def archive(token, pages):
-            self.assertEqual(pages, ["page-1-watched-0"])
-            con = app.db()
-            con.execute("UPDATE user_videos SET watched=1 WHERE video_id='newly-watched'")
-            con.commit()
-            con.close()
-            return []
-
-        with patch.object(app, "notion_archive_pages", side_effect=archive):
+        con = app.db()
+        con.execute("UPDATE user_videos SET watched=1 WHERE video_id='newly-watched'")
+        con.commit();con.close()
+        with patch.object(app.urllib.request, "urlopen", side_effect=AssertionError("deletion called external service")):
             status, result = self.request("/api/me/videos/remove-watched", {"video_ids": ["watched-0"]})
         self.assertEqual((status, result["count"]), (200, 1))
         self.assertEqual(len(self.video_ids()), 101)
@@ -100,11 +94,11 @@ class WatchedDeletionTests(APITest):
         self.assertEqual(con.execute("SELECT COUNT(*) FROM user_video_sources WHERE user_id=1 AND video_id='watched-0'").fetchone()[0], 0)
         con.close()
 
-    def test_stale_unwatched_or_foreign_selection_never_calls_notion(self):
+    def test_stale_unwatched_or_foreign_selection_never_calls_external_services(self):
         self.add_video("watched")
         self.add_video("unwatched", watched=0)
         self.add_video("foreign", uid=2)
-        with patch.object(app, "notion_archive_pages") as archive:
+        with patch.object(app.urllib.request, "urlopen") as archive:
             for invalid in ("missing", "unwatched", "foreign"):
                 status, _ = self.request("/api/me/videos/remove-watched", {"video_ids": ["watched", invalid]})
                 self.assertEqual(status, 409)
@@ -112,16 +106,16 @@ class WatchedDeletionTests(APITest):
         self.assertIn("watched", self.video_ids())
 
     def test_explicit_bounded_unique_selection_required(self):
-        with patch.object(app, "notion_archive_pages") as archive:
+        with patch.object(app.urllib.request, "urlopen") as archive:
             for selection in (None, [], "all", ["a", "a"], [False], list(map(str, range(101)))):
                 self.assertEqual(self.request("/api/me/videos/remove-watched", {"video_ids": selection})[0], 400)
             archive.assert_not_called()
 
-    def test_remote_failure_keeps_local_records_and_sources(self):
+    def test_deletion_is_local_and_needs_no_external_service(self):
         self.add_video("watched")
-        with patch.object(app, "notion_archive_pages", return_value=["fixture failure"]):
-            self.assertEqual(self.request("/api/me/videos/remove-watched", {"video_ids": ["watched"]})[0], 409)
-        self.assertEqual(self.video_ids(), {"watched"})
+        with patch.object(app.urllib.request, "urlopen", side_effect=AssertionError("deletion called external service")):
+            self.assertEqual(self.request("/api/me/videos/remove-watched", {"video_ids": ["watched"]})[0], 200)
+        self.assertEqual(self.video_ids(), set())
 
 
 class RequestValidationTests(APITest):
@@ -163,7 +157,7 @@ class PlaylistSyncTests(APITest):
         items = [self.video(v) for v in baseline]
         with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", items, len(items))), \
              patch.object(app, "db", wraps=app.db) as connect, \
-             patch.object(app, "notion_create_video") as export:
+             patch.object(app.urllib.request, "urlopen") as export:
             status, result = self.request("/api/me/sync", {})
             self.assertEqual(status, 200)
             self.assertEqual(result["errors"], [])
@@ -175,10 +169,6 @@ class PlaylistSyncTests(APITest):
         self.add_playlist(["baseline-a", "baseline-b"])
         exports = []
 
-        def export(token, source_id, video):
-            exports.append(video["video_id"])
-            return {"id": "page-" + video["video_id"]}
-
         # Insert at head/middle/tail, then replace an item without growing the list.
         memberships = [
             ["head", "baseline-a", "baseline-b"],
@@ -186,7 +176,7 @@ class PlaylistSyncTests(APITest):
             ["head", "baseline-a", "middle", "baseline-b", "tail"],
             ["head", "replacement", "middle", "baseline-b", "tail"],
         ]
-        with patch.object(app, "notion_create_video", side_effect=export):
+        with patch.object(app.urllib.request, "urlopen", side_effect=AssertionError("import called external service")):
             for ids in memberships:
                 with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", [self.video(v) for v in ids], len(ids))) as fetch:
                     status, result = self.request("/api/me/sync", {})
@@ -198,26 +188,130 @@ class PlaylistSyncTests(APITest):
             # Reordering and repeated sync do not re-export or import the baseline.
             with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", [self.video(v) for v in reversed(memberships[-1])], 5)):
                 self.assertEqual(self.request("/api/me/sync", {})[1]["count"], 0)
-        self.assertEqual(exports, ["head", "middle", "tail", "replacement"])
-        self.assertEqual(self.video_ids(), set(exports))
+        self.assertEqual(exports, [])
+        self.assertEqual(self.video_ids(), {"head", "middle", "tail", "replacement"})
 
-    def test_failed_export_is_retried_and_shared_video_links_without_duplicate_export(self):
+    def test_import_is_local_and_shared_video_links_without_duplicates(self):
         self.add_playlist(["baseline"])
         self.add_video("shared")
-        items = [self.video(v) for v in ("baseline", "shared", "retry")]
-        with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", items, 3)):
-            with patch.object(app, "notion_create_video", side_effect=ValueError("fixture failure")):
-                result = self.request("/api/me/sync", {})[1]
-                self.assertEqual(len(result["errors"]), 1)
-                self.assertNotIn("retry", self.video_ids())
-            with patch.object(app, "notion_create_video", return_value={"id": "retry-page"}) as export:
-                result = self.request("/api/me/sync", {})[1]
-                self.assertEqual(result["count"], 1)
-                self.assertEqual(result["errors"], [])
-                self.assertEqual(export.call_count, 1)
+        items = [self.video(v) for v in ("baseline", "shared", "new")]
+        with patch.object(app, "youtube_playlist_feed", return_value=("Playlist", items, 3)), \
+             patch.object(app.urllib.request, "urlopen", side_effect=AssertionError("import called external service")):
+            result = self.request("/api/me/sync", {})[1]
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["errors"], [])
+            self.assertIn("new", self.video_ids())
+            self.assertEqual(self.request("/api/me/sync", {})[1]["count"],0)
         con = app.db()
         self.assertEqual(con.execute("SELECT COUNT(*) FROM user_video_sources WHERE user_id=1 AND video_id='shared' AND source_type='playlist'").fetchone()[0], 1)
         con.close()
+
+
+class IndependentLibraryTests(APITest):
+    def test_full_library_lifecycle_without_external_integrations(self):
+        with patch.object(app.urllib.request,'urlopen',side_effect=AssertionError('core touched external service')):
+            status,category=self.request('/api/me/categories',{'name':'Local category'})
+            self.assertEqual(status,201);cid=category['id']
+            self.assertEqual(self.request('/api/me/categories/update',{'category_id':cid,'name':'Renamed locally'})[0],200)
+            self.assertEqual(self.request('/api/me/categories/update',{'category_id':2,'name':'Foreign'})[0],404)
+            self.assertEqual(self.request('/api/me/categories/remove',{'category_id':2})[0],404)
+            channel_id='UC'+'x'*22
+            with patch.object(app,'youtube_channel_head',return_value=('Channel','baseline')):
+                self.assertEqual(self.request('/api/me/channels',{'channel':channel_id,'category_id':cid})[0],201)
+            old=PlaylistSyncTests.video('baseline')
+            with patch.object(app,'youtube_playlist_feed',return_value=('Playlist',[old],1)):
+                self.assertEqual(self.request('/api/me/playlists',{'playlist':'PLfixture123456','category_id':cid})[0],201)
+            self.assertEqual(self.request('/api/me/categories/remove',{'category_id':cid})[0],409)
+            video=PlaylistSyncTests.video('channel-new');video['published_at']=app.datetime.fromtimestamp(time.time()+10, tz=app.datetime.now().astimezone().tzinfo).isoformat()
+            with patch.object(app,'youtube_feed',return_value=('Channel',[video],'channel-new')), \
+                 patch.object(app,'youtube_playlist_feed',return_value=('Playlist',[old,PlaylistSyncTests.video('playlist-new')],2)):
+                status,result=self.request('/api/me/sync',{})
+            self.assertEqual((status,result['count'],result['errors']),(200,2,[]))
+            self.assertEqual(len(self.request('/api/feed')[1]['videos']),2)
+            self.assertEqual(self.request('/api/me/videos/watched',{'video_id':'playlist-new','watched':True})[0],200)
+            self.assertEqual(self.request('/api/me/videos/remove-watched',{'video_ids':['playlist-new']})[0],200)
+            settings=self.request('/api/me/settings')[1]
+            self.assertEqual(self.request('/api/me/channels/remove',{'channel_id':settings['channels'][0]['id']})[0],200)
+            self.assertEqual(self.request('/api/me/playlists/remove',{'playlist_id':settings['playlists'][0]['id']})[0],200)
+            self.assertEqual(self.request('/api/me/categories/remove',{'category_id':cid})[0],200)
+            self.assertEqual(self.video_ids(),set())
+
+    def test_source_removal_preserves_shared_videos_and_other_users(self):
+        self.add_video('exclusive');self.add_video('shared');self.add_video('foreign',uid=2)
+        con=app.db()
+        con.execute("INSERT INTO user_channels(id,user_id,youtube_channel_id,title,category_id,created_at) VALUES(1,1,'channel','Channel',1,0)")
+        con.execute("INSERT INTO user_playlists(id,user_id,youtube_playlist_id,title,category_id,created_at) VALUES(1,1,'playlist','Playlist',1,0)")
+        con.execute("INSERT INTO user_playlist_seen VALUES(1,1,'shared',0)")
+        con.execute("INSERT INTO user_video_sources VALUES(1,'shared','playlist','1',0)")
+        con.commit();con.close()
+        with patch.object(app.urllib.request,'urlopen',side_effect=AssertionError('deletion made external request')):
+            status,result=self.request('/api/me/channels/remove',{'channel_id':1})
+            self.assertEqual((status,result['removed_videos'],result['kept_shared_videos']),(200,1,1))
+            self.assertEqual(self.video_ids(),{'shared'})
+            status,result=self.request('/api/me/playlists/remove',{'playlist_id':1})
+            self.assertEqual((status,result['removed_videos']),(200,1))
+            self.assertEqual(self.video_ids(),set())
+            self.assertEqual(self.video_ids(2),{'foreign'})
+
+    def test_removed_integration_endpoints_are_unavailable(self):
+        for path in ('/auth/notion/start','/auth/notion/callback','/api/me/notion'):
+            connection=http.client.HTTPConnection(*self.server.server_address,timeout=5)
+            try:
+                connection.request('GET',path,headers={'Cookie':self.cookie})
+                response=connection.getresponse();response.read()
+                self.assertEqual(response.status,404)
+            finally:connection.close()
+        for path in ('/api/me/notion','/api/me/notion/disconnect','/api/me/notion/sync','/api/me/categories/sync','/api/admin/sync'):
+            self.assertEqual(self.request(path,{})[0],404)
+
+    def test_category_changes_are_local(self):
+        with patch.object(app.urllib.request,'urlopen',side_effect=AssertionError('local category touched external service')):
+            self.assertEqual(self.request('/api/me/categories',{'name':'New'})[0],201)
+            self.assertEqual(self.request('/api/me/categories',{'name':'New'})[0],409)
+            self.assertEqual(self.request('/api/me/categories/update',{'category_id':1,'name':'Renamed'})[0],200)
+            self.assertEqual(self.request('/api/me/categories/remove',{'category_id':1})[0],200)
+
+
+class LegacyMigrationTests(unittest.TestCase):
+    def test_upgrade_removes_integration_data_and_preserves_the_entire_library(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(app,'DB_PATH',str(Path(tmp)/'legacy.sqlite3')):
+            con=app.sqlite3.connect(app.DB_PATH)
+            con.executescript((ROOT/'tests/fixtures/pre_removal_schema.sql').read_text())
+            con.execute("INSERT INTO users VALUES(1,'fixture@example.test','Fixture','password-hash',1)")
+            con.execute("INSERT INTO sessions VALUES('session-hash',1,9999999999)")
+            con.execute("INSERT INTO user_categories VALUES(1,1,'Category','old-db','old-source',10)")
+            con.execute("INSERT INTO user_videos VALUES(1,'video','Title','Description','channel','Channel',1,'2026-01-01','https://example.test/thumb','https://youtube.com/watch?v=video','old-page',1,20)")
+            con.execute("INSERT INTO user_channels VALUES(1,1,'channel','Channel',1,10,'video','2026-01-01')")
+            con.execute("INSERT INTO user_playlists VALUES(1,1,'playlist','Playlist',1,10,1,'2026-01-01')")
+            con.execute("INSERT INTO user_playlist_seen VALUES(1,1,'video',20)")
+            con.execute("INSERT INTO user_video_sources VALUES(1,'video','playlist','1',20)")
+            con.execute("INSERT INTO watch_sessions VALUES(1,'session-id','video',1,123,20,143)")
+            con.execute("INSERT INTO user_integrations VALUES(1,'retired-secret','root',20)")
+            con.execute("INSERT INTO notion_oauth_states VALUES('retired-oauth-state',1,9999999999)")
+            con.execute("INSERT INTO settings VALUES('integrations','retired-global-secret')")
+            con.execute("INSERT INTO settings VALUES('unrelated','preserved')")
+            con.commit();con.close()
+            con=app.db()
+            try:
+                self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+                self.assertEqual(con.execute('PRAGMA foreign_key_check').fetchall(),[])
+                self.assertEqual(con.execute('SELECT name FROM users').fetchone()[0],'Fixture')
+                self.assertEqual(con.execute('SELECT token_hash FROM sessions').fetchone()[0],'session-hash')
+                self.assertEqual(tuple(con.execute('SELECT name,created_at FROM user_categories').fetchone()),('Category',10))
+                self.assertEqual(tuple(con.execute('SELECT video_id,title,watched,created_at FROM user_videos').fetchone()),('video','Title',1,20))
+                self.assertEqual(con.execute('SELECT seconds FROM watch_sessions').fetchone()[0],123)
+                for table in ('user_channels','user_playlists','user_playlist_seen','user_video_sources'):
+                    self.assertEqual(con.execute('SELECT COUNT(*) FROM '+table).fetchone()[0],1)
+                tables={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                self.assertFalse(tables & {'user_integrations','notion_oauth_states','notion_archive_queue'})
+                for table in ('user_categories','user_videos','categories','videos'):
+                    self.assertFalse(any(r['name'].startswith('notion_') for r in con.execute('PRAGMA table_info('+table+')')))
+                self.assertIsNone(con.execute("SELECT value FROM settings WHERE key='integrations'").fetchone())
+                self.assertEqual(con.execute("SELECT value FROM settings WHERE key='unrelated'").fetchone()[0],'preserved')
+                # Running the migration again is safe after a restart.
+                app.initialize_database(con)
+                self.assertEqual(con.execute('SELECT seconds FROM watch_sessions').fetchone()[0],123)
+            finally:con.close()
 
 
 class StatisticsTests(APITest):

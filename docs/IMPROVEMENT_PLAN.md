@@ -1,5 +1,7 @@
 # Elmontaqa improvement plan
 
+> Historical audit plan from 2026-10-17. Notion was removed from the application on 2026-10-18; all Notion/OAuth/export proposals below are retired. See CHANGELOG.md for current behavior.
+
 Prepared 2026-10-17 from the deployed v30 application. Estimates assume one experienced engineer, include focused verification, and are planning ranges rather than commitments. Findings are source-reviewed unless identified as live HTTP observations. This plan does not deploy or implement the proposed product changes.
 
 ## Product direction

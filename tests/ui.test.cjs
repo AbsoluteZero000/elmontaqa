@@ -8,7 +8,7 @@ const path = require('node:path');
 const script = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-async function page({user = null, sync, feed, statistics, pathname = "/"} = {}) {
+async function page({user = null, sync, feed, statistics, settings, pathname = "/"} = {}) {
   const elements = new Map();
   function element(selector) {
     if (!elements.has(selector)) {
@@ -41,6 +41,7 @@ async function page({user = null, sync, feed, statistics, pathname = "/"} = {}) 
       else if (url === '/api/feed') body = feed ? await feed() : {videos: [], categories: []};
       else if (url === '/api/me/statistics') body = statistics;
       else if (url === '/api/me/watch-time') body = {ok: true};
+      else if (url === '/api/me/settings') body = settings;
       else if (url === '/api/me/sync') body = await sync();
       else throw new Error('Unexpected request: ' + url);
       return {ok: true, json: async () => body};
@@ -153,4 +154,15 @@ test('statistics signed-out and empty states are explicit', async () => {
   }});
   assert.match(empty.element('#statisticsCategories').innerHTML, /أول تصنيف/);
   assert.match(empty.element('#categoryTimeBars').innerHTML, /أول فيديو/);
+});
+
+
+test('settings load categories and sources from the app without external integrations', async () => {
+  const p = await page({user: {name: 'Fixture'}, settings: {
+    categories: [{id: 1, name: 'Local', channel_count: 0, playlist_count: 0, video_count: 0}], channels: [], playlists: []
+  }});
+  await vm.runInContext('loadUserSettings()', p.context);
+  assert.match(p.element('#categoryList').innerHTML, /Local/);
+  assert.equal(p.calls.at(-1).url, '/api/me/settings');
+  assert.equal(p.element('#settingsStatus').textContent, '');
 });

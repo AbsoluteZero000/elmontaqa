@@ -57,3 +57,12 @@ The hashes in AUDIT.md describe the recovered initial commit, not subsequently e
 - Store user-scoped watch sessions separately from library videos so recorded time survives video deletion. Removing a category clears its history association while preserving overall time. Add a user/category history index.
 - Validate input types, session identity, user ownership and elapsed time on updates. Test delayed first heartbeats, duplicate/out-of-order updates, removal retention and private statistics.
 - Validation: 14 Python regressions, seven Node behavioral checks, baseline authentication checks, and four Chromium desktop/mobile fixture checks. Browser checks cover layout overflow, statistics, dialog focus and iframe cleanup; third-party playback availability is outside fixture tests.
+
+
+## 2026-10-18 — remove Notion completely
+
+- Remove all Notion OAuth/configuration/export/archive routes, UI controls and network helpers. Settings now load categories, channels and playlists from `/api/me/settings`; category management and YouTube imports write directly to SQLite. Deleting videos or sources requires no external API.
+- Remove the cryptography dependency and OAuth environment settings. Retain APP_SECRET for signed login sessions.
+- On startup, atomically remove integration credentials, OAuth states and obsolete remote-ID columns, while preserving accounts, sessions, categories, subscriptions, playlist membership, videos, watched status and watch time. Historical audit documents remain as provenance; their Notion plans are retired.
+- Verify the old-schema upgrade using a populated fixture and a temporary copy of the actual production database. All account/library/watch-history fingerprints were unchanged in the production rehearsal. A consistent encrypted backup was restore-checked before the upgrade.
+- Regression checks cover the full independent library lifecycle, source-sharing deletion, removed endpoints, user isolation, and migration repeatability. Settings open on Channels and contain only Channels, Playlists and Categories.

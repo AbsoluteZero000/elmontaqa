@@ -21,3 +21,11 @@ The checker used installed local dependencies; it does not establish exact produ
 - `python3 tools/check_browser_ui.py`: Chromium desktop/mobile screenshots reviewed; statistics and player checks passed at 1440px and 390px. Uses synthetic API data and a player stub; actual YouTube playback is not certified by this checker.
 - Production diagnosis: 2.45s cold homepage TTFB versus 0.28s warm health TTFB; per-connection migrations/backfill caused reads to wait for SQLite writers. A synthetic writer-lock reproduction improved from 1.03s to 0.0004s after moving initialization out of ordinary connections. The unchanged 3,000-entry playlist fixture now uses fewer than ten database connections.
 - Encrypted SQLite backup created on the production volume and restored into a separate temporary file for integrity verification before deployment. See OPERATIONS.md for format and rollback details. No authenticated production sync or Notion mutations were used for verification.
+
+
+## 2026-10-18 integration removal
+
+- 19 API/database regressions, eight Node behavior checks and the isolated authentication baseline pass. Local library lifecycle and deletions reject any unexpected external request in their fixtures.
+- Historical-schema fixture verifies retained users, sessions, subscriptions, playlist membership, video metadata, watched flags and watch time; integrity/foreign-key checks pass and rerunning the migration is safe.
+- A consistent snapshot of the production database was migrated only in a temporary file on the production machine. Fingerprints of every app data table, excluding removed remote IDs, were identical before/after. No production user data was downloaded.
+- Chromium checks cover desktop/mobile statistics, playback and the three-tab local settings panel. Third-party video availability remains outside synthetic browser tests.

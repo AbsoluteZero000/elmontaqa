@@ -22,8 +22,7 @@ def main():
             port = sock.getsockname()[1]
         db_path = str(Path(temp) / "test.sqlite3")
         env = {**os.environ, "APP_SECRET": secrets.token_urlsafe(48),
-               "DB_PATH": db_path, "PORT": str(port), "ADMIN_TOKEN": "",
-               "NOTION_OAUTH_CLIENT_ID": "", "NOTION_OAUTH_CLIENT_SECRET": ""}
+               "DB_PATH": db_path, "PORT": str(port), "ADMIN_TOKEN": ""}
         with open(Path(temp) / "server.log", "w+") as log:
             process = subprocess.Popen([sys.executable, "server.py"], cwd=ROOT,
                                        env=env, stdout=log, stderr=log)
@@ -57,7 +56,7 @@ def main():
                 assert request("/")[0] == 200
                 assert request("/api/me")[:2] == (200, {"user": None})
                 assert request("/api/feed")[0] == 401
-                assert request("/api/admin/config")[0] == 403
+                assert request("/api/admin/feedback")[0] == 403
                 assert request("/api/login", {"email": "nobody@example.test", "password": "invalid"})[0] == 401
                 cookies = []
                 for name in ("alice", "bob"):
@@ -70,8 +69,8 @@ def main():
                 alice, bob = cookies
                 with sqlite3.connect(db_path) as con:
                     uid = con.execute("SELECT id FROM users WHERE name='alice'").fetchone()[0]
-                    con.execute("INSERT INTO user_categories(id,user_id,name,notion_database_id,notion_data_source_id,created_at) VALUES(1,?,'fixture','fake-db','fake-source',0)", (uid,))
-                    con.execute("INSERT INTO user_videos(user_id,video_id,title,description,channel_id,channel_title,category_id,published_at,video_url,notion_page_id,created_at) VALUES(?,'fixture-video','fixture','','fake-channel','fixture',1,'2026-10-17T00:00:00Z','https://www.youtube.com/watch?v=fixture','fake-page',0)", (uid,))
+                    con.execute("INSERT INTO user_categories(id,user_id,name,created_at) VALUES(1,?,'fixture',0)", (uid,))
+                    con.execute("INSERT INTO user_videos(user_id,video_id,title,description,channel_id,channel_title,category_id,published_at,video_url,created_at) VALUES(?,'fixture-video','fixture','','fake-channel','fixture',1,'2026-10-17T00:00:00Z','https://www.youtube.com/watch?v=fixture',0)", (uid,))
                 assert len(request("/api/feed", cookie=alice)[1]["videos"]) == 1
                 assert request("/api/feed", cookie=bob)[1]["videos"] == []
                 assert request("/api/me/videos/watched", {"video_id": "fixture-video", "watched": True}, bob)[0] == 404
