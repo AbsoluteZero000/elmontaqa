@@ -45,6 +45,7 @@ setTimeout(async()=>{
   } else if(new URLSearchParams(location.search).has('settings-test')) {
    await loadUserSettings();document.querySelector('#settingsModal').classList.add('open');
    check(document.querySelectorAll('.settings-tab').length===3,'unexpected settings tab count');
+   const tabs=document.querySelector('.settings-tabs');check(tabs.scrollWidth<=tabs.clientWidth,'settings tabs overflow');
    check(!/notion/i.test(document.querySelector('#settingsModal').textContent),'retired integration still visible');
    check(document.querySelector('#channelsPane').classList.contains('active'),'channels should open first');
    check(document.querySelector('#categoryList input').value.includes('القرآن'),'local categories missing');
