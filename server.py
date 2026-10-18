@@ -257,10 +257,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200);self.send_header('Content-Type',allowed[filename]);self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','public, max-age=31536000, immutable');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(body)
             except OSError:self.send_error(404)
             return
-        if path=='/favicon.png':
+        if path in ('/icon-animated.gif','/favicon.ico','/favicon.png'):
+            asset={'/icon-animated.gif':('icon-animated.gif','image/gif'),'/favicon.ico':('favicon.ico','image/x-icon'),'/favicon.png':('favicon.png','image/png')}[path]
             try:
-                with open('favicon.png','rb') as f:body=f.read()
-                self.send_response(200);self.send_header('Content-Type','image/png');self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','public, max-age=86400');self.end_headers();self.wfile.write(body)
+                with open(asset[0],'rb') as f:body=f.read()
+                self.send_response(200);self.send_header('Content-Type',asset[1]);self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','public, max-age=86400');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(body)
             except OSError:self.send_error(404)
             return
         if path=='/api/me':

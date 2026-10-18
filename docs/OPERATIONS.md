@@ -52,3 +52,9 @@ Restore-verified encrypted backup: `/data/pre-removal-20261018-093125.sqlite3.ae
 The upgrade removes retired integration tables and remote-ID columns. Old application images require those fields: do not perform a code-only rollback to a pre-removal image. Prefer a forward fix, or restore the backup into a separate volume/app and reconcile subsequent writes before switching traffic. Historical encrypted backups require cryptography in a separate recovery environment; the application no longer installs it. APP_SECRET remains necessary for sessions and historical backup recovery.
 
 Remove the `NOTION_OAUTH_CLIENT_ID` and `NOTION_OAUTH_CLIENT_SECRET` Fly secrets with `flyctl secrets unset --stage` before deploying this release. This does not revoke the old third-party authorization or modify previously exported workspace pages; those are outside the application.
+
+### Fly source recovery — 2026-10-18
+
+Recovered `/app` source and public icons from machine `84ed23dc5d0d78`, version 36, image `registry.fly.io/elmontaqa:deployment-01M57E03NPEHP06VE1RVEHMAB6`. The production changes add animated branding and GIF/ICO icon routes. The Dockerfile now includes both new assets. No database or secrets were copied.
+
+The observed image has no `/app/static` directory despite referencing the bundled Plyr assets. Keep the versioned assets and Docker `COPY static` from this repository for future builds. Live Fly configuration currently has `min_machines_running = 0` and no HTTP health check; the repository retains its intended warm-machine setting and `/health` check. This recovery only synchronizes source to GitHub; it does not deploy or modify live configuration.

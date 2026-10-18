@@ -4,7 +4,7 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8080
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py index.html favicon.png ./
+COPY server.py index.html favicon.png favicon.ico icon-animated.gif ./
 COPY static ./static
 EXPOSE 8080
 CMD ["python", "server.py"]
